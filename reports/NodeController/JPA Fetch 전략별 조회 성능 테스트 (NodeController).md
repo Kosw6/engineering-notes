@@ -1122,19 +1122,19 @@ FROM node_note_link where note_id='15090';
 
 1. 500자 3단계 페이지 조회 `NativeQuery + JSON Aggregation`
 
-![NativeQuery + JSON Aggregation](../../../image/json_agg_3table.png)
+![NativeQuery + JSON Aggregation](../../image/json_agg_3table.png)
 
 2. 500자 2단계 조회 `프로젝션`
 
-![500 Projection](../../../image/500_projection_2table.png)
+![500 Projection](../../image/500_projection_2table.png)
 
 3. 500자 2단계 테이블 조회 `Fetch Join`
 
-![500 Fetch Join](../../../image/fetch_join_2table.png)
+![500 Fetch Join](../../image/fetch_join_2table.png)
 
 4. +20자 2단계 조회 `프로젝션`
 
-![20 Projection](../../../image/20_projection_2table.png)
+![20 Projection](../../image/20_projection_2table.png)
 
 #### 500자 콘텐츠 반환 모니터링 + k6부하테스트 분석 요약
 
@@ -1422,11 +1422,11 @@ GC Pause가 급격히 증가하며 STW 시간이 누적되었다.
 #### 모니터링 이미지
 
 - 20자 프리뷰 반환(DB) 모니터링/RPS 120
-  ![20_120RPS](../../../image/folmula_20_fetchjoin.png)
+  ![20_120RPS](../../image/folmula_20_fetchjoin.png)
 - 1만자 원문 반환 모니터링/RPS 25
-  ![10k_25RPS](../../../image/10k_fetchjoin_safe.png)
+  ![10k_25RPS](../../image/10k_fetchjoin_safe.png)
 - 1만자->20자 프리뷰 반환(APP) 모니터링/RPS 25
-  ![10k_20_25RPS](../../../image/10k_20_fetchjoin_safe.png)
+  ![10k_20_25RPS](../../image/10k_20_fetchjoin_safe.png)
 
 #### GC 및 쓰레드에 관한 공식 문서
 

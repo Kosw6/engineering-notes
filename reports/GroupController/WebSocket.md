@@ -446,9 +446,9 @@ public class RoomPresenceCoalescer<T>{
 ---
 
 - 더티 플래그 미적용
-![no_dirty](../../../image/nodirty_raw_20.png)
+![no_dirty](../../image/nodirty_raw_20.png)
 - 더티 플래그 적용
-![dirty](../../../image/dirty_raw_20.png)
+![dirty](../../image/dirty_raw_20.png)
 
 - 센더의 메세지 전송이 지난 후 플래그를 적용한 이미지는 Memory, allocation이 전송 후 안정화 되는 것을 확인 할 수 있다.
 - 이를 통해 불필요한 중복 브로드캐스트, 메모리 점유, cpu리소스 사용을 제거하였다.

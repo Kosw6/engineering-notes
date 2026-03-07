@@ -39,15 +39,15 @@
 
 - jfr를 통해 기록할 경우 이전 문서와 동일한 RPS로 측정불가하여 P95가 급격히 뛰는 구간을 측정하였다.
 
-![10K_20RPS_JMC](../../../../image/10k_20_jmc.png)
-![10K_20RPS_JMC](../../../../image/10k_20_GC.png)
+![10K_20RPS_JMC](../../../image/10k_20_jmc.png)
+![10K_20RPS_JMC](../../../image/10k_20_GC.png)
 
 - 위 이미지를 보면 상당히 높은 MemoryAllocation과 상위 스택 트레이스에 PGStream.receiveTupleV3()가 높은 비중을 차지하는 것을 알 수 있다.
 - GC Summary이미지를 보면 총GC시간은 9.59s, 총 멈춘 시간은 5.06s으로 90초 본부하 테스트 동안 높은 시간 비중을 차지하는 것을 알 수 있다.
 - 위 두 이미지를 분석한 결과 DB → JDBC → String 디코딩 과정에서 대용량 byte[] + char[]가 폭발적으로 생성하는 것을 알 수 있다.
 
-![V1_60RPS_JMC](../../../../image/V1.png)
-![V1_60RPS_GC](../../../../image/V1_GC.png)
+![V1_60RPS_JMC](../../../image/V1.png)
+![V1_60RPS_GC](../../../image/V1_GC.png)
 
 - 다음 두 이미지는 10k -> 20자로 줄여 DB에서 조회하는 흐름의 경우이다.
 - 테스트는 RPS를 20(웜업)->60(본부하)로 변경한 것 외에는 동일하다.
@@ -141,8 +141,8 @@ V1 : hotpath 개선전
 
 ## JMC이미지
 
-![V1_60RPS_JMC](../../../../image/V1.png)
-![V1_60RPS_GC](../../../../image/V1_GC.png)
+![V1_60RPS_JMC](../../../image/V1.png)
+![V1_60RPS_GC](../../../image/V1_GC.png)
 
 ## V1의 분석 및 문제점, 해결방안
 
@@ -354,9 +354,9 @@ public class JwtTokenProvider {
 #### V1,V2 JMC이미지 분석
 
 - V1
-  ![V1_60RPS_JMC](../../../../image/V1.png)
+  ![V1_60RPS_JMC](../../../image/V1.png)
 - V2(HotPath개선)
-  ![V2_60RPS_JMC](../../../../image/V2.png)
+  ![V2_60RPS_JMC](../../../image/V2.png)
 
 - 두 이미지를 확인해보면 상단의 Top MemoryAllocate의 ConditionNode부분에서 360MB 줄었으며 이미지 하단의 Top StackTrace의 ensureBuffer()가 400회 정도 줄은 것을 알 수 있다.
 - 두 항목은 직접적인 1:1 관계를 갖는 요소는 아니지만,
@@ -534,13 +534,13 @@ public interface NodeRepository extends JpaRepository<Node,Long> {
 - 이 결과에 대한 원인을 찾기 위해 아래 V2,2step의 JMC이미지를 확인하며 분석하고자 한다.
 
 - 2step
-  ![2step_60RPS_JMC](../../../../image/2step.png)
+  ![2step_60RPS_JMC](../../../image/2step.png)
 - V2(HotPath개선)
-  ![V2_60RPS_JMC](../../../../image/V2.png)
+  ![V2_60RPS_JMC](../../../image/V2.png)
 - 2step_GC
-  ![2step_60RPS_GC](../../../../image/2step_GC.png)
+  ![2step_60RPS_GC](../../../image/2step_GC.png)
 - V2_GC(HotPath개선)
-  ![V2_60RPS_GC](../../../../image/V2_GC.png)
+  ![V2_60RPS_GC](../../../image/V2_GC.png)
 
 - 2step이미지를 볼 경우 상위 할당에 기존 V2에서 ConditionNode부분이 내려갔으며 대신 `Object[]`, `Method`와 같은 할당이 크게 증가하였음을 알 수 있다. 또한 스택 트레이스의 경우 V2에서 줄이고자 한 `PGStream.receiveTupleV3()`이 내려갔으며 대신 `Copy`, `toArray`등 **객체 그래프** 조립 비용이 늘어난 것을 알 수 있다.
 
