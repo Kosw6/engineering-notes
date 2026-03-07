@@ -1,0 +1,760 @@
+[
+  {
+    "controller": "StockController",
+    "base": "/api/stock",
+    "endpoints": [
+      {
+        "name": "range",
+        "method": "GET",
+        "path": "",
+        "qsTemplate": "stockName={{stock}}&start={{start}}&end={{end}}",
+        "params": {
+          "stock": ["TSLA"],
+          "start": ["2025-02-01T00:00:00"],
+          "end": ["2025-03-01T00:00:00"]
+        },
+        "paramLabels": ["stock", "start", "end"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 60,
+            "preAllocatedVUs": 200,
+            "maxVUs": 300,
+            "duration": "3m",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 10,
+            "preAllocatedVUs": 150,
+            "maxVUs": 300,
+            "duration": "90s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 300,
+            "preAllocatedVUs": 200,
+            "maxVUs": 700,
+            "duration": "90s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 30,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 500,
+            "maxVUs": 1500,
+            "gracefulStop": "30s",
+            "stages": [
+              { "target": 300, "duration": "90s" },
+              { "target": 420, "duration": "90s" },
+              { "target": 540, "duration": "90s" },
+              { "target": 680, "duration": "90s" },
+              { "target": 750, "duration": "90s" },
+              { "target": 800, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      },
+      {
+        "name": "before",
+        "method": "GET",
+        "path": "/latest-stock-before",
+        "qs": "stock=AAPL&latestDate=2025-05-10T00:00:00&count=100",
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 20,
+            "maxVUs": 40,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 20,
+            "timeUnit": "1s",
+            "gracefulStop": "30s",
+            "preAllocatedVUs": 40,
+            "maxVUs": 500,
+            "stages": [
+              { "target": 40, "duration": "90s" },
+              { "target": 80, "duration": "90s" },
+              { "target": 120, "duration": "90s" },
+              { "target": 160, "duration": "90s" },
+              { "target": 200, "duration": "90s" },
+              { "target": 200, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "DirectoryController",
+    "base": "/api/directories",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "id={{id}}",
+        "qsTemplate": "",
+        "params": { "id": ["200149"] },
+        "paramLabels": ["id"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 12,
+            "maxVUs": 24,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 8,
+            "maxVUs": 20,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 200,
+            "preAllocatedVUs": 40,
+            "maxVUs": 80,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 20,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 20,
+            "maxVUs": 100,
+            "stages": [
+              { "target": 40, "duration": "90s" },
+              { "target": 80, "duration": "90s" },
+              { "target": 120, "duration": "90s" },
+              { "target": 160, "duration": "90s" },
+              { "target": 200, "duration": "90s" },
+              { "target": 200, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "PageController",
+    "base": "/api/pages",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "",
+        "qsTemplate": "id={{id}}",
+        "params": { "id": ["200149"] },
+        "paramLabels": ["id"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 16,
+            "maxVUs": 32,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 15,
+            "maxVUs": 40,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 200,
+            "preAllocatedVUs": 50,
+            "maxVUs": 100,
+            "duration": "5m",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 20,
+            "timeUnit": "1s",
+            "gracefulStop": "30s",
+            "preAllocatedVUs": 200,
+            "maxVUs": 400,
+            "stages": [
+              { "target": 100, "duration": "90s" },
+              { "target": 150, "duration": "90s" },
+              { "target": 200, "duration": "90s" },
+              { "target": 300, "duration": "90s" },
+              { "target": 400, "duration": "90s" },
+              { "target": 400, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "GraphController",
+    "base": "/api/graph",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "{{pageId}}",
+        "qsTemplate": "",
+        "params": { "pageId": ["200149"] },
+        "paramLabels": ["pageId"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 16,
+            "maxVUs": 32,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 15,
+            "maxVUs": 40,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 180,
+            "preAllocatedVUs": 60,
+            "maxVUs": 120,
+            "duration": "2m",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 20,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 500,
+            "maxVUs": 1500,
+            "gracefulStop": "30s",
+            "stages": [
+              { "target": 40, "duration": "90s" },
+              { "target": 80, "duration": "90s" },
+              { "target": 120, "duration": "90s" },
+              { "target": 160, "duration": "90s" },
+              { "target": 200, "duration": "90s" },
+              { "target": 200, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "NodeController",
+    "base": "/api/nodes",
+    "endpoints": [
+      {
+        "name": "single",
+        "method": "GET",
+        "path": "{{id}}",
+        "qsTemplate": "",
+        "params": { "id": ["200043"] },
+        "paramLabels": ["id"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 150,
+            "maxVUs": 300,
+            "duration": "2m",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 40,
+            "preAllocatedVUs": 200,
+            "maxVUs": 400,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 120,
+            "preAllocatedVUs": 650,
+            "maxVUs": 800,
+            "duration": "90s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 50,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 400,
+            "maxVUs": 1000,
+            "stages": [
+              { "target": 80, "duration": "60s" },
+              { "target": 100, "duration": "90s" },
+              { "target": 120, "duration": "90s" },
+              { "target": 300, "duration": "90s" },
+              { "target": 350, "duration": "90s" },
+              { "target": 400, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.01"],
+              "http_req_duration{phase:main}": ["p(95)<300"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      },
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "page/{{pageId}}",
+        "qsTemplate": "",
+        "params": {},
+        "paramLabels": ["pageId"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 150,
+            "maxVUs": 300,
+            "duration": "2m",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 40,
+            "preAllocatedVUs": 200,
+            "maxVUs": 400,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 60,
+            "preAllocatedVUs": 450,
+            "maxVUs": 2000,
+            "duration": "90s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 50,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 200,
+            "maxVUs": 600,
+            "stages": [
+              { "target": 80, "duration": "30s" },
+              { "target": 80, "duration": "90s" },
+
+              { "target": 100, "duration": "30s" },
+              { "target": 100, "duration": "90s" },
+
+              { "target": 120, "duration": "30s" },
+              { "target": 120, "duration": "90s" },
+
+              { "target": 140, "duration": "30s" },
+              { "target": 140, "duration": "90s" },
+
+              { "target": 160, "duration": "30s" },
+              { "target": 160, "duration": "90s" },
+
+              { "target": 180, "duration": "30s" },
+              { "target": 180, "duration": "90s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.01"],
+              "http_req_duration{phase:main}": ["p(95)<300"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "EdgeController",
+    "base": "/api/edges",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "{{id}}",
+        "qsTemplate": "",
+        "params": { "id": ["49143"] },
+        "paramLabels": ["id"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "ramping-arrival-rate",
+            "startRate": 70,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 90,
+            "maxVUs": 300,
+            "stages": [
+              { "target": 140, "duration": "30s" },
+              { "target": 140, "duration": "2m" },
+              { "target": 500, "duration": "30s" }
+            ],
+            "gracefulStop": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 12,
+            "maxVUs": 30,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 705,
+            "preAllocatedVUs": 500,
+            "maxVUs": 900,
+            "duration": "90s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 280,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 200,
+            "maxVUs": 400,
+            "stages": [
+              { "target": 320, "duration": "60s" },
+              { "target": 400, "duration": "90s" },
+              { "target": 500, "duration": "90s" },
+              { "target": 600, "duration": "90s" },
+              { "target": 700, "duration": "90s" },
+              { "target": 700, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.01"],
+              "http_req_duration{phase:main}": ["p(95)<300"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "NoteController",
+    "base": "/api/note",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "{{id}}",
+        "qsTemplate": "",
+        "params": { "id": ["3247"] },
+        "paramLabels": ["id"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 12,
+            "maxVUs": 24,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 12,
+            "maxVUs": 30,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 200,
+            "preAllocatedVUs": 50,
+            "maxVUs": 100,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 200,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 200,
+            "maxVUs": 400,
+            "stages": [
+              { "target": 240, "duration": "60s" },
+              { "target": 320, "duration": "90s" },
+              { "target": 400, "duration": "90s" },
+              { "target": 500, "duration": "90s" },
+              { "target": 600, "duration": "90s" },
+              { "target": 600, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.01"],
+              "http_req_duration{phase:main}": ["p(95)<300"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "TickerController",
+    "base": "/api/suggest",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "",
+        "qsTemplate": "q={{q}}",
+        "params": { "q": ["TS"] },
+        "paramLabels": ["q"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 100,
+            "maxVUs": 200,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 200,
+            "maxVUs": 300,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 200,
+            "preAllocatedVUs": 90,
+            "maxVUs": 150,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 20,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 50,
+            "maxVUs": 300,
+            "stages": [
+              { "target": 40, "duration": "90s" },
+              { "target": 80, "duration": "90s" },
+              { "target": 120, "duration": "90s" },
+              { "target": 160, "duration": "90s" },
+              { "target": 200, "duration": "90s" },
+              { "target": 200, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "UserController",
+    "base": "/api/user",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "/{{id}}",
+        "qsTemplate": "",
+        "params": { "id": ["100"] },
+        "paramLabels": ["id"],
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 12,
+            "maxVUs": 24,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 8,
+            "maxVUs": 20,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 200,
+            "preAllocatedVUs": 40,
+            "maxVUs": 80,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 200,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 200,
+            "maxVUs": 400,
+            "stages": [
+              { "target": 240, "duration": "60s" },
+              { "target": 320, "duration": "90s" },
+              { "target": 400, "duration": "90s" },
+              { "target": 500, "duration": "90s" },
+              { "target": 600, "duration": "90s" },
+              { "target": 600, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.01"],
+              "http_req_duration{phase:main}": ["p(95)<300"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "controller": "ContentController",
+    "base": "/api/content",
+    "endpoints": [
+      {
+        "name": "list",
+        "method": "GET",
+        "path": "/init",
+        "variants": [
+          {
+            "name": "warmup",
+            "executor": "constant-arrival-rate",
+            "rate": 30,
+            "preAllocatedVUs": 12,
+            "maxVUs": 24,
+            "duration": "30s",
+            "tags": { "phase": "warmup" }
+          },
+          {
+            "name": "light",
+            "executor": "constant-arrival-rate",
+            "rate": 50,
+            "preAllocatedVUs": 8,
+            "maxVUs": 20,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "heavy",
+            "executor": "constant-arrival-rate",
+            "rate": 200,
+            "preAllocatedVUs": 40,
+            "maxVUs": 80,
+            "duration": "30s",
+            "tags": { "phase": "main" }
+          },
+          {
+            "name": "find-limit",
+            "executor": "ramping-arrival-rate",
+            "startRate": 20,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 15,
+            "maxVUs": 60,
+            "stages": [
+              { "target": 40, "duration": "90s" },
+              { "target": 80, "duration": "90s" },
+              { "target": 120, "duration": "90s" },
+              { "target": 160, "duration": "90s" },
+              { "target": 200, "duration": "90s" },
+              { "target": 200, "duration": "180s" }
+            ],
+            "thresholds": {
+              "http_req_failed{phase:main}": ["rate<0.05"],
+              "http_req_duration{phase:main}": ["p(95)<3000"]
+            },
+            "tags": { "phase": "main" }
+          }
+        ]
+      }
+    ]
+  }
+]
