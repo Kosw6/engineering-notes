@@ -1,24 +1,36 @@
 ## 테스트 환경
 
-| 항목                   | 설정                                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| 서버사양 #1 (개발 환경,로컬 노트북)                | 6 Core / 32GB / SSD <br>-> 기능 비교 및 부하 패턴 분석용                                                                                 |
-| 서버사양 #2 (배포 서버,실험 최종)| 4 Core/16GB/SSD <br>-> Capacity 및 병목 분석용|
-| DB                   | PostgreSQL 17 + TimescaleDB                                                                                   |
-| 커넥션 풀                | HikariCP `maximumPoolSize=150`, `minimumIdle=80`                                                              |
-| 테스트 도구               | k6 v0.52                                                                                                      |
-| 부하 모델                | 동일 룸 서로 다른 200명 동시 접속, 송신자 20명만 20Hz 전송(= 인바운드 400 msg/s), 서버는 룸 전체 브로드캐스트(= 아웃바운드 최대 200 × 400 = 80,000 send/s 시도) |
-| 네트워크                 | 내부 브릿지 (Docker Compose)                                                                                       |
-| JVM                  | OpenJDK Temurin 17 (64-bit, JDK)                                                                              |
-| GC                   | G1GC                                                                                                          |
-| 힙 초기/최대              | `-Xms248m`, `-Xmx3942m` (컨테이너 메모리 기반 자동 산정)                                                                   |
-| G1 Region Size       | 2MB                                                                                                           |
-| Parallel GC Workers  | 4                                                                                                             |
-| Max Pause Target     | 200ms (`-XX:MaxGCPauseMillis=200`, 기본값)                                                                       |
-| String Deduplication | Disabled (명시 옵션 미사용)                                                                                          |
-| SLO                  | **E2E 수신 지연 200ms 이하 성공률** (`<=200ms`)                                                                        |
+| 항목 | 설정 |
+|---|---|
+| 서버사양 #1 (개발 환경, 로컬 노트북) | 6 Core / 32GB / SSD <br>→ 기능 비교 및 부하 패턴 분석용 |
+| 서버사양 #2 (배포 서버, 실험 최종) | 4 Core / 16GB / SSD <br>→ Capacity 및 병목 분석용 |
+| DB | PostgreSQL 17 + TimescaleDB |
+| 커넥션 풀 | HikariCP `maximumPoolSize=150`, `minimumIdle=80` |
+| 테스트 도구 | k6 v0.52 |
+| 동시 접속자 수 | 동일 룸 기준 200명 |
+| 송신자 수 | 20명 |
+| 송신자 비율 | 전체의 10% |
+| 송신 빈도 | sender당 20Hz |
+| 인바운드 이벤트율 | 400 msg/s (= 20명 × 20Hz) |
+| 아웃바운드 fan-out 시도량 | 최대 80,000 send/s (= 200명 × 400 msg/s) |
+| 메시지 payload 크기 | 약 200Byte, 환경변수 기반 padding으로 조절 가능 |
+| 네트워크 | 내부 브릿지 (Docker Compose) |
+| JVM | OpenJDK Temurin 17 (64-bit, JDK) |
+| GC | G1GC |
+| 힙 초기/최대 | `-Xms248m`, `-Xmx3942m` (컨테이너 메모리 기반 자동 산정) |
+| G1 Region Size | 2MB |
+| Parallel GC Workers | 4 |
+| Max Pause Target | 200ms (`-XX:MaxGCPauseMillis=200`) |
+| String Deduplication | Disabled (명시 옵션 미사용) |
+| SLO | **E2E 수신 지연 200ms 이하 성공률** (`<=200ms`) |
 
 ※ 로컬 환경은 상대 비교(구조/패턴 분석)에 사용하였으며, 최종 capacity 및 병목 분석은 배포 서버에서 수행하였다.
+
+※ latency는 sender가 메시지를 전송할 때 기록된 `sentAt` 기준으로
+receiver가 메시지를 수신할 때까지의 end-to-end 지연으로 측정하였다.
+
+※ 최악 상황의 fan-out 기준으로, 초당 400개의 이벤트가 발생하면 200명의 룸 브로드캐스트 환경에서 
+최대 **80,000개의 메시지 전송 시도**(send/sec)가 발생한다
 
 ---
 
@@ -510,7 +522,7 @@ public class RoomPresenceCoalescer<T>{
 그러나,
 
 > GC 증가에도 불구하고 RAW는 CPU saturation이 발생하지 않았으며
-> 결과적으로 ≤200ms 실시간 응답률을 더 높게 유지하였다.
+> STOMP 대비 ≤200ms 실시간 응답률이 약 11.85%p 높고 CPU 사용률이 약 15.9% 낮아 더 안정적인 성능을 보였다.
 
 정리하자면
 
