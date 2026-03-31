@@ -501,10 +501,10 @@ public class RoomPresenceCoalescer<T>{
 
 ### 2.송신자 40명 jfr, jmc분석
 
-|Type|Received|≤200ms|CPU Peek(JVM+App)|Byte[] TopAlloc|GC Total|GC Pause|
-|-------|-------|-------|-------|-------|-------|-------|
-|STOMP|2,443,877|**78.04%**|55.6%|999Mib(37.6%)|473.923ms|260.919ms|
-|RAW|2,713,236|**89.89%**|39.7%|1003MiB(46.4%)|820.713ms|301.644ms|
+|Type|Received|≤200ms|CPU Peek(JVM+App)|Byte[] TopAlloc|Peek Memory Usage|GC Total|GC Pause|
+|-------|-------|-------|-------|-------|------|-------|-------|
+|STOMP|2,443,877|**78.04%**|55.6%|999Mib(37.6%)|210MiB|473.923ms|260.919ms|
+|RAW|2,713,236|**89.89%**|39.7%|1003MiB(46.4%)|179MiB|820.713ms|301.644ms|
 
 #### 런타임 분석 결과
 
@@ -514,10 +514,13 @@ public class RoomPresenceCoalescer<T>{
   * 브로커 라우팅 오버헤드
   * 메시지 매핑 비용
 
+* **RAW는 STOMP와 달리 중간 레이어가 없기에 메모리 사용량이 적음**
+   * 메모리 사용량 210MiB(STOMP) VS 171MiB(RAW)
+   * 라우팅, 구독, 트랜잭션과 같은 기능을 요하지 않으며 실시간성이 중요한 상황에서는 가볍게 직접 구현
 * **RAW는 CPU는 낮지만 GC Total이 더 높음**
-
   * 직접 fanout 구조
   * JSON 직렬화 과정에서 Byte[] 생성 반복
+  * 처리율은 높으며 GC Pause의 시간 또한 GC Total에 비해 STOMP와 유사
 
 그러나,
 
