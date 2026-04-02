@@ -1,3 +1,36 @@
+# 🚀 Summary
+
+## 🎯 문제 정의
+- Fetch Join 기반 최적화 이후에도 p95가 목표 SLO 미달
+- 추가 튜닝 방향이 불명확한 상태
+
+## 🔍 핵심 원인
+- JFR/JMC 분석 결과:
+  - JWT 검증 로직 중복 실행 (Hot Path)
+  - 불필요한 DB 조회 (인증 과정)
+  - Base64 decode 과정에서 byte[] / char[] 과다 생성
+- GC Pause 증가 및 Allocation 폭증
+
+## 🛠 해결 전략
+- JFR + JMC 기반 런타임 분석 도입
+- JWT 검증 1회화 (validate → reuse 구조)
+- 인증 과정에서 DB 조회 제거 (stateless 인증)
+- Hot Path 제거 후 Allocation 감소 확인
+- 2-step 구조 PoC 수행 (병목 이동 검증)
+
+## 📈 결과
+- Old GC Time: **3.47s → 2.22s (약 36% 감소)**
+- p95 latency 약 **10% 개선**
+- Allocation 및 ConditionNode 감소
+- ensureBufferSize 호출 감소
+
+## 💡 핵심 인사이트
+- 성능 병목은 쿼리가 아니라 **Hot Path에 존재**
+- 인증/공통 로직도 성능 병목이 될 수 있음
+- 병목 제거 시 **다른 병목으로 이동하는 현상 확인 (2-step)**
+- JMC는 런타임 상에서 병목의 원인을 탐지하기에 효과적이다.
+
+
 ## 테스트 환경
 
 | 항목                 | 설정                                                                                                       |

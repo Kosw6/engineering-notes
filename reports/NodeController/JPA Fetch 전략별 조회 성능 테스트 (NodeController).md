@@ -1,4 +1,35 @@
-### NodeController 조회 성능 최적화: JPA Fetch 전략(Lazy, Batch, Fetch Join) 비교 및 캐시·메모리 영향 분석
+## NodeController 조회 성능 최적화: Lazy / Batch / Fetch Join 비교와 GC 영향 분석
+
+# 🚀 Summary
+
+## 🎯 문제 정의
+- Node 목록 조회 API에서 동일 조건 대비 Edge 대비 낮은 처리량 발생
+- RPS 증가 시 p95 급격히 증가 (목표 SLO 미달)
+
+## 🔍 핵심 원인
+- Lazy Loading 기반 N+1 쿼리 발생
+- Fetch Join 시 Row Explosion (10 → 100 rows)
+- JSON Aggregation 시 CPU/직렬화 비용 증가
+- Projection 사용 시 DTO 객체 생성 폭증 → GC 부담 증가
+
+## 🛠 해결 전략
+- Fetch 전략 비교 실험 (Lazy / Batch / Fetch Join)
+- JSON Aggregation → 성능 저하로 미채택
+- Projection vs Fetch Join 비교 (JMC 기반 분석)
+- 링크 테이블에 note_subject 물리화 + 트리거 적용
+- content preview(20자)로 payload 축소
+
+## 📈 결과
+- 1차 비교 기준 Fetch Join 목록 조회 p95: **2551ms(Lazy) → 413ms(Fetch Join)** 
+- Lazy 대비 최대 **6배 이상 성능 개선**
+- Projection 대비 Fetch Join이 **GC 안정성 + 메모리 효율 우수**
+
+## 💡 핵심 인사이트
+- 성능 병목은 DB가 아니라 **객체 생성량 + GC**
+- Fetch Join은 단순 왕복 감소를 넘어, **부모 엔티티 Deduplicate를 통한 메모리/GC 최적화 효과**가 있었다
+- Row Explosion은 DB 문제가 아니라 **애플리케이션 레벨 부담으로 전이됨**
+
+- → 단순 쿼리 수 감소가 아닌, 객체 생성 수와 GC 비용까지 고려한 구조적 최적화를 수행하였다.
 
 ## 📋 목차
 
@@ -49,12 +80,8 @@
 
 ### 가정/범위
 
-본 분석은 “목록 조회 중심, 읽기 위주 워크로드”를 전제로 한다.
-요청당 노드 수는 제한적이며(≈10개), 각 노드에 소량의 연관 데이터(링크 ≈10개)가 연결된 구조를 가정한다.
-
-목록 조회에서는 페이징이 필요 없고, 단건 상세 조회는 별도 API로 분리되어 있다.
-
-쓰기·갱신 트래픽은 매우 낮아 조회 성능과 tail latency(p95) 안정성을 최우선 목표로 둔다.
+본 문서는 NodeController 조회 성능 개선을 위해 JPA Fetch 전략(Lazy, Batch Fetch, Fetch Join, Projection, Native Query)을 단계적으로 비교하고,
+각 전략이 **쿼리 수, 응답 크기, 메모리 사용, GC 영향**에 어떤 차이를 만드는지 실측 기반으로 분석한 결과를 정리한다.
 
 ### 1차 테스트(Node,Node_Note_link)
 
@@ -116,8 +143,11 @@ DB 단에서 한 번에 묶는 방식을 시도했다.
 원래는 “엔티티가 아닌 DTO Projection이 더 빠르겠지”라고 예상했는데,
 결과는 반대로 나왔다.
 
-**JSON Aggregation ≪ 500자 Projection ≪ 20자 Projection ≪ 500자 Fetch Join**
-순으로 성능이 좋았다. Projection이 Fetch Join보다 느린 이유가 궁금해서
+성능은 대체로 다음 순서로 좋았다.
+
+**JSON Aggregation < 500자 Projection < 20자 Projection < 500자 Fetch Join**
+
+추가로
 GC·스레드·커넥션·p95/p99를 전부 모니터링하면서 분석했다.
 
 결론적으로, 둘 다 DB에서는 100행을 읽지만
@@ -131,7 +161,8 @@ GC에서 **Fetch Join의 Pause가 평균 5ms**, Projection은 **6ms** 정도였�
 이 차이가 결국 p95까지 이어졌다.
 요약하면, 행 폭증 상황에서는 **Fetch Join이 메모리 효율과 GC 안정성 면에서 더 낫다**는 걸 확인했다.
 
-추가로 20자 반환, 500자 반환 Projection의 경우 GC의 영향은 동일하였으며 부하테스트를 통한 20자에서 P95성능이 좋은 원인은 GC, JSON직렬화/역직렬화가 줄었음을 확인하게 되었다.
+추가로 20자/500자 Projection 비교에서는 GC 차이는 크지 않았고,
+20자 반환의 p95 개선은 주로 **응답 페이로드 축소와 JSON 직렬화/역직렬화 비용 감소** 영향으로 해석하였다.
 
 ### 4차 테스트(Node, Node_Note_Link, Note)
 
@@ -485,7 +516,11 @@ Hibernate:
 #### 설명
 
 `fetch join`으로 필요한 연관 엔티티를 한 번의 쿼리로 가져오면 **왕복 횟수가 최소화**되어 레이턴시가 급감한다.
-테스트 결과, 웜 상태에서 단건 조회는 목록 조회는 **874ms(p95)** 목록 조회는 **412ms(p95)** 로 Lazy의 약 **6배 이상 빠르다**.
+
+특히 동일 부모 엔티티가 중복 생성되지 않는 구조 덕분에 객체 생성 수가 크게 감소하였다.
+
+테스트 결과, 웜 상태에서 **단건 조회는 874ms(p95)**, **목록 조회는 412ms(p95)** 로 측정되었고,
+목록 조회 기준 Lazy 대비 약 **6배 이상 빠른 결과**를 보였다.
 
   <details>
   <summary>📜 fetch목록 로그 결과 (클릭하여 보기)</summary>
@@ -605,7 +640,9 @@ List<Node> findAllWithLinksByIds(Collection<Long> ids);
 
 LazyLoading의 N+1 문제를 완화하기 위해 설정된 `default_batch_fetch_size`는
 연관 엔티티를 **IN 쿼리(batch)** 로 묶어 한 번에 가져온다.
-콜드에서는 효과 미미했지만, 웜캐시 목록에서 **2551→1888ms**로 개선되어 왕복 최소화 확인
+
+콜드에서는 효과가 제한적이었지만, 웜캐시 목록에서는 **2551ms → 1888ms**로 개선되어
+왕복 쿼리 감소 효과를 확인할 수 있었다.
 
   <details>
   <summary>📜 batch fetch목록 로그 결과 (클릭하여 보기)</summary>
@@ -704,7 +741,8 @@ spring:
 - 1차 테스트에서는 UI 요구가 없었기 때문에 노트 링크의 noteId만 반환하여 왕복 쿼리 수 최소화 전략을 검증했다.
   해당 실험을 통해 쿼리 횟수가 적을수록 성능이 유의미하게 개선됨을 확인하였다.
 - 2차 테스트부터는 UI 요구(노드 하단에 노트 제목 표시 및 클릭 로딩)에 따라 반환 스키마를 noteId → {id,title}로 확장한다.
-  스키마 변경에 따른 페이로드 증가를 감안하여, 2차에서는 Fetch Join 대신 DTO 프로젝션/네이티브 집계를 채택해 로우 폭증 없이 필드만 추가하도록 설계했다.
+  스키마 변경에 따른 페이로드 증가를 감안하여, 2차에서는 UI 요구사항 반영을 위해 DTO 프로젝션과 네이티브 집계를 검토했고,
+행 폭증을 줄이면서 필요한 필드만 확장하는 방향으로 실험을 설계했다.
 - 1차 테스트와 마찬가지로 동일 원칙(왕복 최소화)을 유지한 2차 실험을 설계하였다.
 
 ### 스키마 변화 (요약)
@@ -897,7 +935,7 @@ row_count_after
 
 - 단 기존의 노드목록조회에 노트ID와 제목이 필요하다는 점을 고려하여 링크 테이블의 스키마를 추가할 예정이다.
 
-## 3차테스트
+## 3차 테스트
 
 ### 스키마 변경 및 서비스내의 노드 조회 구조 변경점
 
@@ -1199,6 +1237,10 @@ FROM node_note_link where note_id='15090';
 - **행 폭증이 있는 조회라면** GC 관점에서
   **Fetch Join(부모 Deduplicate + 컬렉션 누적) ≤ Projection(DTO 폭증) ≪ JSON Aggregation(직렬화/파싱 폭증)**
   순으로 유리했다.
+
+- **Projection**은 **네트워크/직렬화 측면에서는 유리**하지만,
+엔티티 기반 Fetch Join 대비 **객체 재사용(Deduplicate) 측면에서는 불리**할 수 있다.
+
 - **JSON 집계**는 행 수는 줄이나 집계/정렬/직렬화 비용으로 인해 **CPU 바운드 + GC 압력이 커져** p95가 높아졌다.
 - **본문 길이 축소(500→20자)** 는 **GC Pause에는 미미**, **JSON 변환 비용(p95)** 에서 체감 개선.
 - 동일 RPS에서 **왕복 최소화 + 객체 수 최소화**가 **핵심 병목 해소 전략**임을 확인했다.
@@ -1217,7 +1259,7 @@ FROM node_note_link where note_id='15090';
 
 ## 4차 테스트(fetch join + 노드 콘텐츠 20자)
 
-- 같은 행 폭증 상황일때 DTO Projectione대신 엔티티 Fetch Join이 성능이 좋음(Deduplicate)
+- 같은 행 폭증 상황에서는 DTO Projection보다 엔티티 Fetch Join이 더 좋은 성능을 보였다 (Deduplicate 효과)
 - 따라서 방향성을 fetch join으로 가되 프리뷰 같이 노드 컨텐츠를 20자로 줄여 반환하여 GC, JSON 직렬화/역직렬화의 오버헤드를 줄이고자 한다
 
 ### 해결방법
@@ -1232,7 +1274,7 @@ FROM node_note_link where note_id='15090';
 
 #### @Formula()란
 
-- DB가 매번 계산해서 돌려주는 읽기 전용 가상 컬럼으로 엔티티를 로드할 때에 하이버네이트가 SELECT절에 끼워서 보낸다.
+- `@Formula`는 엔티티 조회 시 Hibernate가 SELECT 절에 계산식을 포함시켜 읽어오는 **읽기 전용 가상 컬럼**이다.
 
 - 따라서 노드 엔티티에 읽기 전용 콘텐츠 필드를 추가하고 기존 원본 콘텐츠 필드는 LAZYLOADING으로 목록 조회시에는 원본 콘텐츠 대신 읽기 전용 콘텐츠를 가져오는 구조로 변경하려고 한다.
 
@@ -1473,23 +1515,20 @@ GC Pause가 급격히 증가하며 STW 시간이 누적되었다.
 
 3. 기존 전체 Content데이터는 LazyLoading으로 수정하여 단건 조회시에 추가 조회 쿼리를 날려 반환하는 방식으로 오버헤드를 줄인다.
 
-4. 목록 조회의 경우 위 1,2,3,4차 테스트를 진행하면서 최종 성능은 120RPS에 평균 700ms대를 기록하였으며 SLO(Service Level Objective)인 p95 300ms대 요청량을 추가 측정하여 아래와 같은 결과가 나왔다
+4.  목록 조회에 대해서는 1~4차 테스트를 거쳐 최종 구조를 확정하였다.
+기본 부하(120RPS)에서는 평균 p95가 700ms대였고,
+추가로 SLO(p95 300ms대)를 만족하는 최대 처리 구간을 별도로 측정한 결과는 아래에 첨부하였다.
 
+
+5. 본 실험에서 관측된 p95 붕괴는 DB/Hikari 지표보다 JVM allocation rate 증가와 GC safepoint 정지(STW) 누적과 더 강하게 상관관계를 보였다.
+
+>따라서 목록 조회는 Fetch Join 기반 + 콘텐츠 프리뷰 제한 전략으로 최종 확정하였다.
+
+### SLO만족 최대 처리 구간
 | 구분                     | RPS    | P95(ms) | 평균 처리량(req/s, 3회 평균) | 실패율 |
 | ------------------------ | ------ | ------- | ---------------------------- | ------ |
 | 20자 프리뷰 + fetch join | 30→105 | 312.38  | 105.01                       | 0.00%  |
 
-5. 본 실험에서 관측된 p95 붕괴는 DB/Hikari 지표보다 JVM allocation rate 증가와 GC safepoint 정지(STW) 누적과 더 강하게 상관관계를 보였다.
-   관련 근거(JFR/JMC 이벤트 타임라인, allocation top classes, safepoint cause)는 별도 부록으로 정리하였다.
-   !()[]
-   | 20자 프리뷰 + fetch join | 30→105 | 273.21 | 105.01 | 0.00% |
-   166RPS에서 유지 167RPS에서 throughtput 166.68req/s
-   === k6 Summary (phase:main) ===  
-   avg latency: 310.39 ms  
-   p95 latency: 2020.69 ms  
-   throughput: 67.50 req/s (avg over test)  
-   throughput(active): 166.00 req/s (active-window)
-   fail rate: 0.00%
 
 ## 전제/한계
 

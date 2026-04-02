@@ -1,3 +1,39 @@
+# 🚀 Summary
+
+## 🎯 문제 정의
+- 실시간 협업 환경에서 WebSocket 브로드캐스트 시:
+  - RAW 구조에서 메시지 유실 및 세션 붕괴 발생
+  - 대부분 메시지가 1000ms 이상 지연 (실시간성 붕괴)
+
+## 🔍 핵심 원인
+- 동일 WebSocketSession에 대한 동시 send → TEXT_PARTIAL_WRITING 예외
+- 세션 제거 → 브로드캐스트 범위 붕괴
+- All-delivery 구조로 인한 큐 적체 및 지연 누적
+- flush 구조에서 중복 전송 발생 (dirty 미적용)
+
+## 🛠 해결 전략
+- ConcurrentWebSocketSessionDecorator 적용 (세션 단위 직렬화)
+- Drop / Latest-only 전략 도입 (휘발성 데이터 최적화)
+- Scheduler 기반 주기적 flush
+- Dirty Flag 도입 → 중복 전송 제거
+
+## 📈 결과
+- RAW 수신량: **6,000 → 2,400,000 (정상 수준 회복)**
+- ≤200ms 응답 비율:
+  - Drop 미적용: **~48%**
+  - Dirty Flag 적용: **~99%**
+- GC / Allocation 안정화
+- 안정적인 fan-out 처리 확보
+
+## 💡 핵심 인사이트
+- 실시간 시스템에서 중요한 것은 **전부 전달이 아니라 최신성**
+- Backpressure 설계 없으면 시스템은 반드시 붕괴
+- Dirty Flag는 단순 최적화가 아니라 **구조 안정화 핵심 요소**
+- RAW vs STOMP 차이는 성능이 아니라 **설계 철학 차이**
+
+
+
+
 ## 테스트 환경
 
 | 항목 | 설정 |
