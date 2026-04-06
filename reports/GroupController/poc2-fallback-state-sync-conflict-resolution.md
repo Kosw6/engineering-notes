@@ -31,7 +31,7 @@
 
 ## 2. 아키텍처
 
-(fallback + kafka + redis 아키텍처 이미지 추가)
+![아키텍쳐 다이어그램](../../image/poc2.png)
 
 ---
 
