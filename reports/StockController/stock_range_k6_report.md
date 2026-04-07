@@ -81,8 +81,7 @@ Stock 조회 API의 성능 병목을 분석하고 개선한 과정을 정리한 
 | -------------------- | ------------------------------------------------------------------------------------- |
 | 서버 사양            | 4 Core / 16GB / SSD                                                                   |
 | DB                   | PostgreSQL 17 + TimescaleDB                                                           |
-| 커넥션 풀            | HikariCP max=150,idle=80                                                              |
-| Redis                | max-active=128                                                                        |
+| 커넥션 풀            | HikariCP max=125,idle=80                                                              |
 | 테스트 도구          | k6 v0.52                                                                              |
 | 초기 부하 유형       | ramping-arrival 20RPS 시작으로도 과부하 -><br>매우 낮은 constant-arrival-rate(5~7RPS) |
 | 네트워크             | 내부 브릿지 (Docker Compose 환경)                                                     |

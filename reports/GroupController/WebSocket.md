@@ -41,7 +41,7 @@
 | 서버사양 #1 (개발 환경, 로컬 노트북) | 6 Core / 32GB / SSD <br>→ 기능 비교 및 부하 패턴 분석용 |
 | 서버사양 #2 (배포 서버, 실험 최종) | 4 Core / 16GB / SSD <br>→ Capacity 및 병목 분석용 |
 | DB | PostgreSQL 17 + TimescaleDB |
-| 커넥션 풀 | HikariCP `maximumPoolSize=150`, `minimumIdle=80` |
+| 커넥션 풀 | HikariCP `maximumPoolSize=125`, `minimumIdle=80` |
 | 테스트 도구 | k6 v0.52 |
 | 동시 접속자 수 | 동일 룸 기준 200명 |
 | 송신자 수 | 20명 |
