@@ -180,11 +180,11 @@ V1 : hotpath 개선전
 ## V1의 분석 및 문제점, 해결방안
 
 - 상위 Allocation에서 주요하게 보이는 것은 byte[], ConditionNode이다
-  - byte[]:
-  - ConditionNode:
+  - byte[]: PostgreSQL 응답 데이터와 직렬화/버퍼 확장 과정에서 대량 생성된 객체
+  - ConditionNode: 동시성 제어 과정에서 스레드 대기가 발생하며 생성된 동기화 관련 객체
 - 상위 StackTrace에서 주요하게 보이는 것은 다음과 같다
-  - ensureBufferSize():
-  - PGStream.receiveTupleV3:
+  - ensureBufferSize(): 버퍼 부족 시 배열을 재할당하며 메모리 사용량과 Allocation을 증가시킨 지점
+  - PGStream.receiveTupleV3: DB 결과를 읽어오는 JDBC 내부 처리 구간으로, 응답 데이터 수신 비용이 집중된 지점
 - 따라서 우선적으로 ensureBufferSize()를 줄이기 위해 라이브러리를 조회하였고 JWT관련 코드에서 decode(), encode()에서 주요하게 사용되는 것을 확인하였고 특히 decode()부분의 메서스 실행량이 특히 많은 것을 알 수 있다.
 - 코드 분석 결과 JwtProvider클래스에서 사용중인 jwt토큰을 검증하는 부분에서 중복이 발생함을 알 수 있었다.
 - 검증하는 메서드는 `com.auth0.jwt.JWT;` 해당 라이브러리를 사용하며
