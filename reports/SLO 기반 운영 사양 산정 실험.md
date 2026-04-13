@@ -154,7 +154,7 @@ SLO: p95 ≤ 300ms
 
 ---
 
-## 5. 4core / 16GB AWS 환경 성능 결과
+## 5. 4core / 16GB / m6i.xlarge AWS 환경 성능 결과
 
 ### Node API
 
@@ -188,7 +188,7 @@ SLO: p95 ≤ 300ms
 
 ---
 
-## 7. 다운사이징 실험 (2core / 8GB)
+## 7. 다운사이징 실험 (2core / 8GB / m6i.large)
 
 ### Node
 
@@ -216,8 +216,8 @@ SLO: p95 ≤ 300ms
 
 ### 환경
 
-* App: 2core / 4GB
-* DB: 2core / 8GB → 2core / 4GB 비교
+* App: 2core / 4GB / c6i.large
+* DB: 2core / 8GB / m6i.large → 2core / 4GB / c6i.large비교
 
 ---
 
@@ -298,7 +298,7 @@ SLO: p95 ≤ 300ms
 
 본 실험 결과를 바탕으로, 다음과 같이 운영 환경 설정을 도출하였다.
 
-### App 서버 (2core / 4GB)
+### App 서버 (2core / 4GB / c6i.large)
 
 * Tomcat Threads: 30
 * HikariCP
@@ -308,7 +308,7 @@ SLO: p95 ≤ 300ms
 
 ---
 
-### DB 서버 (2core / 4GB)
+### DB 서버 (2core / 4GB / c6i.large)
 
 * PostgreSQL
 
@@ -374,6 +374,6 @@ SLO: p95 ≤ 300ms
 
 ## 13. 한 줄 결론
 
-> 본 실험은 단순 성능 향상이 아니라
-> SLO를 만족하는 최소 인프라를 찾는 비용 최적화 과정
+> 본 실험은 성능 향상이 아니라
+> SLO를 만족하는 인프라를 찾는 비용 최적화 과정
 
