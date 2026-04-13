@@ -35,8 +35,8 @@
 
 ### 다운사이징 환경
 
-* App Server: AWS EC2 m6i.large (2 vCPU / 8GB)
-* DB Server: 기존 유지 (이후 다운사이징 예정)
+* App Server: 2 vCPU / 8GB → 2 vCPU / 4GB 단계적 축소
+* DB Server: 4 vCPU / 16GB → 2 vCPU / 8GB → 2 vCPU / 4GB 단계적 축소
 
 ---
 
