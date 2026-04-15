@@ -166,8 +166,8 @@
 
 “JMC Allocation/Stack Trace를 통해 인증 경로가 공통 hot path임을 확인했고, 무상태 인증으로 재설계했다.”
 
-V2 : hotpath개선 + fetchjoin그대로 사용 -> memoryallocation 감소
-V1 : hotpath 개선전
+V2 : hotpath개선 + fetchjoin그대로 사용 -> memoryallocation 감소<br>
+V1 : hotpath 개선전<br>
 2step : 노드 서비스 개선(노드만 가져오고 링크 테이블 다시 가져오기) -> PGStream.receiveTupleV3감소
 
 # V1->V2
