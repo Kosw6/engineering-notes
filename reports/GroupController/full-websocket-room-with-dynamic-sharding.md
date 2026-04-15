@@ -1,4 +1,4 @@
-# 📄 Dynamic Sharding Design for Full WebSocket Rooms
+# 📄 Websocket-Room 한계치에서 동적 샤딩 설계
 
 ---
 
