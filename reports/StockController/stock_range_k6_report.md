@@ -426,7 +426,7 @@ CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 �
 또한 CAGG는 backing hypertable에 집계 결과를 저장하여
 대용량 시계열 데이터 환경에서 효율적인 성능과 확장성을 제공한다.
 
-### 7.2 CAGG vs Raw 집계 성능
+### 7.2 주간 CAGG vs Raw 집계 성능
 
 | 구분              | Planning Time (ms) | Execution Time (ms) |
 | --------------- | ------------------ | ------------------- |
