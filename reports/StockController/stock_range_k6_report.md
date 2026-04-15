@@ -437,7 +437,7 @@ CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 �
 
 ---
 
-### 7.3 Cursor vs OFFSET 조회 성능
+### 7.3 주간 CAGG기준 Cursor vs OFFSET 조회 성능
 
 | 종목   | 방식     | OFFSET | Planning Time (ms) | Execution Time (ms) |
 | ---- | ------ | ------ | ------------------ | ------------------- |
