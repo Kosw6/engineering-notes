@@ -402,8 +402,19 @@ EXPLAIN ANALYZE를 통해 실제 조회 성능을 비교하였다. <br>공정성
 
 ### 요약
 
-- 위에서 설계한 확장 전략에서 성능을 검증하여<br>데이터 소스 분리, 집계 규칙 정의, 조회 최적화는  최종적으로 도입하며<br>
-배치기반 refresh전략, 정합성 부분은 공식 문서등을 참고하여 real-time aggregate 방식을 적용하는 것으로 전환하였다.
+- 위에서 설계한 확장 전략에 대해 실제 성능 검증을 수행한 결과,  
+  데이터 소스 분리, 집계 규칙 정의, 조회 최적화 전략은 최종적으로 도입하였다.
+
+- 배치 기반 refresh 전략은 초기에는 refresh 범위와 운영 비용을 명확히 통제하기 위해  
+  수동 refresh 방식으로 설계하였다.
+
+- 그러나 CAGG refresh는 refresh window에 완전히 포함된 bucket만 처리되며,  
+  진행 중인 bucket(incomplete bucket)은 반영되지 않는다는 특성이 존재한다.
+
+- 이에 따라 최신 데이터까지 일관되게 반영하기 위해,  
+  완료된 bucket은 refresh로 materialize하고,  
+  진행 중 bucket은 real-time aggregate를 통해 raw 데이터를 포함하여 조회하는 방식으로  
+  최종 운영 전략을 정리하였다.
 
 
 ---
@@ -421,10 +432,16 @@ EXPLAIN ANALYZE를 통해 실제 조회 성능을 비교하였다. <br>공정성
 
 #### CAGG vs Materialized View 차이
 
-일반 Materialized View는 refresh 시 전체 데이터를 재계산하는 반면,
-CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 수 있다.<br>
-또한 CAGG는 backing hypertable에 집계 결과를 저장하여
+일반 Materialized View는 refresh 시 전체 데이터를 재계산하는 반면,<br>
+CAGG는 time_bucket 기반으로 변경된 구간(refresh window)에 대해서만 재계산을 수행하여,
+전체 재계산을 수행하는 일반 Materialized View 대비 효율적인 갱신이 가능하다..<br>
+
+CAGG는 backing hypertable에 집계 결과를 저장하여
 대용량 시계열 데이터 환경에서 효율적인 성능과 확장성을 제공한다.
+
+또한 CAGG는 refresh 시 refresh window에 완전히 포함된 bucket만 재계산되며,  
+진행 중인 bucket은 materialized 데이터에 반영되지 않는다.<br>  
+최신 데이터는 별도의 raw 기반 계산 또는 real-time aggregate를 통해 조회 시점에 보완된다.
 
 ### 7.2 주간 CAGG vs Raw 집계 성능
 
@@ -433,7 +450,10 @@ CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 �
 | Raw Aggregation | 3.471              | 6.212               |
 | CAGG 조회         | 2.641              | 0.329               |
 
-→ CAGG 적용을 통해 **약 19배 실행 시간 감소**를 확인하였다.
+→ CAGG 적용을 통해 **약 19배 실행 시간 감소**를 확인하였다.<br>
+(집계 연산 제거에 따른 execution cost 감소 효과)
+
+이는 반복적인 집계 연산을 제거하고, 사전 집계된 결과를 조회하는 구조로 전환되었기 때문이다.
 
 ---
 
@@ -466,6 +486,9 @@ CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 �
 | VID  | 주간 재집계  | 1.517              | **0.709**           |
 | VID  | 일간 재집계  | 3.422              | **5.077**           |
 
+→ 집계 단위가 커질수록 사전 집계 효과가 극대화되며,
+raw 기반 재집계 대비 execution cost가 크게 감소하는 것을 확인하였다.
+
 ---
 
 ### 7.5 성능 차이 요약
@@ -482,8 +505,9 @@ CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 �
 
 * CAGG를 통해 집계 연산 비용을 제거하여 성능 개선을 확인하였다.
 * Cursor 기반 조회를 통해 OFFSET 대비 일관된 성능 향상(약 2배)을 확인하였다.
-* 월간 CAGG는 주간 재집계 대비 **약 2.7~2.8배 빠른 성능**을 보였으나,
-  주간 재집계 역시 절대 실행 시간이 매우 작아 실제 서비스 환경에서 충분한 성능을 확보할 수 있었다.
+* 월간 CAGG는 주간 재집계 대비 **약 2.7~2.8배 빠른 성능**을 보였으나,<br>
+  주간 재집계 역시 execution 시간이 충분히 낮아 실시간 조회 요구사항을 만족할 수 있었으며,<br>
+추가 CAGG 생성에 따른 운영 복잡도 증가 대비 성능 이점이 제한적이라고 판단하였다.
 
 → 이에 따라 **운영 복잡도를 고려하여 주간 CAGG까지만 적용하고,
 월/연 단위 조회는 주간 데이터 기반 재집계로 처리하는 전략을 채택하였다.**
@@ -491,12 +515,12 @@ CAGG는 time_bucket 기반 증분 집계를 통해 최근 구간만 갱신할 �
 ----
 
 ### 7.7 운영 복잡도 고려
-CAGG를 추가로 생성할 경우 refresh 대상 증가 및 배치 흐름 복잡도가 상승한다.<br>
+1. CAGG를 추가로 생성할 경우 refresh 대상 증가 및 배치 흐름 복잡도가 상승한다.<br>
 
-또한 다중 CAGG 간 데이터 정합성 관리와 장애 대응 포인트가 증가한다.<br>
+2. 다중 CAGG 간 데이터 정합성 관리와 장애 대응 포인트가 증가한다.<br>
 예를들어 주간 CAGG는 정상 refresh, 월간 CAGG는 refresh에 실패할 경우 차트간 데이터의 불일치가 비정상적으로 보이는 문제가 발생하며 추가 운영 비용이 발생한다.<br>
 
-집계 데이터가 물리적으로 저장되므로 저장 공간 및 인덱스 관리 비용도 함께 증가한다.
+3. 집계 데이터가 물리적으로 저장되므로 저장 공간 및 인덱스 관리 비용도 함께 증가한다.
 
 → 이에 따라 현재 데이터 규모에서는 성능 대비 운영 비용이 더 크다고 판단하여,
 주간 CAGG까지만 적용하는 전략을 유지하였다.
@@ -514,7 +538,6 @@ real-time aggregate 방식으로 별도 처리할 수 있다.
 
 ```sql
 -- 실시간 집계를 활성화하여 materialized data + 최신 raw data를 함께 조회
--- 안정성 + 성능이점
 CREATE MATERIALIZED VIEW stock_1m_cagg
 WITH (
   --CAGG활성화
@@ -524,12 +547,25 @@ WITH (
 ) AS ...
 ```
 
-#### 장점
-- **완료된 버킷**은 빠르고 안정적으로 CAGG에서 조회
-- **현재 진행 중인 버킷**은 raw를 합쳐 최신성 확보
-- refresh는 여전히 **완료된 버킷 중심**으로 관리 가능
-#### 단점
-- real-time aggregate를 활성화하면 최신 raw data까지 함께 조회하므로 최신성은 확보되지만, materialized-only 조회보다 쿼리 비용이 다소 증가할 수 있다.
-- 다만 해당 구조에서는 집계 단위를 주간으로 제한하였기 때문에, 실시간 집계는 최대 최근 1주 구간에 대해서만 수행된다.<br>
-  따라서 다수의 주간 또는 월간 데이터를 조회하는 경우 대부분은 사전 집계된 CAGG 결과를 활용하게 되며,<br>
-  전체적인 성능과 안정성 측면에서 이점이 더 크다고 판단하였다.
+#### 설계 한계 및 최종 전략
+
+초기에는 배치 시점에 맞춰 CAGG를 refresh하여 최신 데이터까지 반영하는 구조를 고려하였다.
+
+그러나 TimescaleDB 공식 문서 기준으로,<br>
+CAGG refresh는 refresh window에 완전히 포함된 bucket만 처리되며,<br>
+진행 중인 bucket(incomplete bucket)은 materialized 데이터로 반영되지 않는다는 제약이 존재한다.
+
+즉, CAGG refresh만으로 최신 구간을 일관되게 반영하는 것은 구조적으로 비효율적이다
+
+이에 따라 다음과 같은 방식으로 최종 전략을 정리하였다.
+
+- **완료된 bucket**은 CAGG refresh를 통해 사전 집계된 결과를 활용
+- **진행 중 bucket**은 real-time aggregate를 통해 raw 데이터를 포함하여 조회
+
+이를 통해 CAGG의 성능 이점은 유지하면서도,<br>
+최신 데이터에 대한 일관된 조회를 보장할 수 있도록 설계하였다.
+
+또한 진행 중 bucket을 refresh 대상으로 포함시키지 않음으로써,<br>
+불필요한 refresh 시도 및 최신 구간에 대한 반복 처리 구조를 제거하였다.
+
+[→TimeScaleDB Reference 바로가기](https://www.tigerdata.com/docs/reference/timescaledb/continuous-aggregates/refresh_continuous_aggregate)
