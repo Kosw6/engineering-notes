@@ -400,21 +400,35 @@ ORDER BY timestamp ASC;
 timescaleDB의 CAGG(연속집계) Materialized View를 활용하여 주간, 월간 논리적 뷰를 생성하여 <br>
 EXPLAIN ANALYZE를 통해 실제 조회 성능을 비교하였다. <br>공정성을 위해 비교시 한 종목당 순서를 바꿔가며 조회하였다.
 
-### 요약
+## 요약
 
-- 위에서 설계한 확장 전략에 대해 실제 성능 검증을 수행한 결과,  
-  데이터 소스 분리, 집계 규칙 정의, 조회 최적화 전략은 최종적으로 도입하였다.
+위에서 설계한 확장 전략에 대해 실제 데이터 기반 성능 검증을 수행한 결과,
+데이터 소스 분리, 집계 규칙 정의, 조회 최적화 전략은 최종적으로 도입한다.
 
-- 배치 기반 refresh 전략은 초기에는 refresh 범위와 운영 비용을 명확히 통제하기 위해  
-  수동 refresh 방식으로 설계하였다.
+초기에는 refresh 범위와 운영 비용을 명확히 통제하기 위해
+배치 기반 수동 refresh 전략으로 설계하였다.
 
-- 그러나 CAGG refresh는 refresh window에 완전히 포함된 bucket만 처리되며,  
-  진행 중인 bucket(incomplete bucket)은 반영되지 않는다는 특성이 존재한다.
+그러나 해당 방식은 watermark 이전 구간에 대한 backfill 데이터 반영이 어렵고,
+refresh 실패 또는 누락 시 데이터 정합성 문제가 발생할 수 있는 한계가 있다.
 
-- 이에 따라 최신 데이터까지 일관되게 반영하기 위해,  
-  완료된 bucket은 refresh로 materialize하고,  
-  진행 중 bucket은 real-time aggregate를 통해 raw 데이터를 포함하여 조회하는 방식으로  
-  최종 운영 전략을 정리하였다.
+이후 real-time aggregate를 적용하여 추가 검증을 수행한 결과,
+
+- real-time aggregate는 watermark 이후 최신 구간에 대해 raw 데이터를 병합하여 보완하며
+- 90주봉 조회 기준에서 materialized-only와 비교해 성능 차이가 거의 발생하지 않음을 확인하였다.
+
+그러나 동시에 다음과 같은 구조적 특성을 확인하였다.
+
+- CAGG refresh는 refresh window에 완전히 포함된 bucket만 처리된다.
+- watermark 이전 구간에 대한 backfill 데이터는 real-time aggregate로 반영되지 않는다.
+- 정합성은 refresh 수행 여부에 의존한다.
+
+이에 따라 단일 방식이 아닌,
+
+- 완료된 bucket은 refresh를 통해 materialize하고
+- 진행 중 bucket은 real-time aggregate로 최신성을 보완하며
+- watermark 이전 구간은 배치 및 검증 전략을 통해 정합성을 확보하는
+
+방식으로 최종 운영 전략을 정리한다.
 
 
 ---
