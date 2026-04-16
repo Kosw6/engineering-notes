@@ -505,67 +505,268 @@ raw 기반 재집계 대비 execution cost가 크게 감소하는 것을 확인�
 
 * CAGG를 통해 집계 연산 비용을 제거하여 성능 개선을 확인하였다.
 * Cursor 기반 조회를 통해 OFFSET 대비 일관된 성능 향상(약 2배)을 확인하였다.
-* 월간 CAGG는 주간 재집계 대비 **약 2.7~2.8배 빠른 성능**을 보였으나,<br>
-  주간 재집계 역시 execution 시간이 충분히 낮아 실시간 조회 요구사항을 만족할 수 있었으며,<br>
-추가 CAGG 생성에 따른 운영 복잡도 증가 대비 성능 이점이 제한적이라고 판단하였다.
+* 월간 CAGG는 주간 재집계 대비 약 2.7~2.8배 빠른 성능을 보였으나,
+  주간 재집계 역시 execution 시간이 충분히 낮아 실시간 조회 요구사항을 만족하였다.
 
-→ 이에 따라 **운영 복잡도를 고려하여 주간 CAGG까지만 적용하고,
-월/연 단위 조회는 주간 데이터 기반 재집계로 처리하는 전략을 채택하였다.**
+또한 뒤에 후술할 실제 서비스 요구사항 기준 검증 결과에서는 real-time aggregate 적용 여부와 관계없이  
+90주봉 조회 기준 execution time은 약 0.6~0.7ms 수준으로 유사하게 유지되었으며,  
+real-time aggregate로 인한 추가 비용은 사실상 무시 가능한 수준임을 확인하였다.
+
+→ 이에 따라 성능과 운영 복잡도를 종합적으로 고려하여  
+**주간 CAGG까지만 적용하고, 월/연 단위 조회는 주간 데이터 기반 재집계로 처리하는 전략을 채택하였다.**
 
 ----
 
-### 7.7 운영 복잡도 고려
-1. CAGG를 추가로 생성할 경우 refresh 대상 증가 및 배치 흐름 복잡도가 상승한다.<br>
+### 7.7 CAGG 구조적 한계
 
-2. 다중 CAGG 간 데이터 정합성 관리와 장애 대응 포인트가 증가한다.<br>
-예를들어 주간 CAGG는 정상 refresh, 월간 CAGG는 refresh에 실패할 경우 차트간 데이터의 불일치가 비정상적으로 보이는 문제가 발생하며 추가 운영 비용이 발생한다.<br>
+CAGG는 성능 측면에서는 효율적이지만, 다음과 같은 구조적 제약을 가진다.
 
-3. 집계 데이터가 물리적으로 저장되므로 저장 공간 및 인덱스 관리 비용도 함께 증가한다.
+- refresh는 refresh window에 완전히 포함된 bucket만 처리된다.
+- 진행 중 bucket(incomplete bucket)은 materialized 데이터로 반영되지 않는다.
+- real-time aggregate는 watermark 이후 구간에 대해서만 raw 데이터를 병합한다.
+- watermark 이전 구간은 materialized 결과를 그대로 사용하며 raw 데이터는 반영되지 않는다.
 
-→ 이에 따라 현재 데이터 규모에서는 성능 대비 운영 비용이 더 크다고 판단하여,
-주간 CAGG까지만 적용하는 전략을 유지하였다.
+이러한 구조로 인해 CAGG는 다음과 같이 동작한다.
 
-### 7.8 실제 운영시 refresh 전략
-
-현재 구조에서는 매일 영업일 기준 한국투자증권 API를 통해 일간 데이터를 받아온다.
-
-주간 CAGG는 현재 진행 중인 불완전 버킷을 제외하고,
-완료된 주간 버킷까지만 refresh하는 방식으로 운용한다.
-
-TimeScaleDB 공식 문서에서 권장하듯이,
-최신 버킷 범위의 진행 중 데이터가 필요할 경우에는 raw 데이터 기반 계산 또는
-real-time aggregate 방식으로 별도 처리할 수 있다.
-
-```sql
--- 실시간 집계를 활성화하여 materialized data + 최신 raw data를 함께 조회
-CREATE MATERIALIZED VIEW stock_1m_cagg
-WITH (
-  --CAGG활성화
-  timescaledb.continuous,
-  --아래부분
-  timescaledb.materialized_only = false
-) AS ...
+```
+[ materialized ] | watermark | [ real-time aggregate ]
 ```
 
-#### 설계 한계 및 최종 전략
+즉, CAGG는 모든 raw 데이터를 자동으로 반영하는 구조가 아니라,  
+**materialized 영역과 real-time 보완 영역이 분리된 구조**임을 확인하였다.
 
-초기에는 배치 시점에 맞춰 CAGG를 refresh하여 최신 데이터까지 반영하는 구조를 고려하였다.
+### 7.8 정합성 관점의 운영 리스크
 
-그러나 TimescaleDB 공식 문서 기준으로,<br>
-CAGG refresh는 refresh window에 완전히 포함된 bucket만 처리되며,<br>
-진행 중인 bucket(incomplete bucket)은 materialized 데이터로 반영되지 않는다는 제약이 존재한다.
+위 구조로 인해 다음과 같은 정합성 문제가 발생할 수 있다.
 
-즉, CAGG refresh만으로 최신 구간을 일관되게 반영하는 것은 구조적으로 비효율적이다
+- 특정 시점까지 refresh 수행 → watermark 이동
+- 이후 해당 bucket 범위에 late data(backfill) 삽입
+- refresh 실패 또는 누락
 
-이에 따라 다음과 같은 방식으로 최종 전략을 정리하였다.
+이 경우:
 
-- **완료된 bucket**은 CAGG refresh를 통해 사전 집계된 결과를 활용
-- **진행 중 bucket**은 real-time aggregate를 통해 raw 데이터를 포함하여 조회
+- materialized 데이터는 과거 상태 유지
+- real-time aggregate는 watermark 이전 구간을 보지 않음
 
-이를 통해 CAGG의 성능 이점은 유지하면서도,<br>
-최신 데이터에 대한 일관된 조회를 보장할 수 있도록 설계하였다.
+→ 결과적으로 **조회 결과와 실제 raw 데이터 간 불일치 발생 가능**
 
-또한 진행 중 bucket을 refresh 대상으로 포함시키지 않음으로써,<br>
-불필요한 refresh 시도 및 최신 구간에 대한 반복 처리 구조를 제거하였다.
+즉, real-time aggregate는 최신 구간 보완에는 유효하지만,  
+**watermark 이전 구간에 대한 정합성은 보장하지 않는다.**
 
-[→TimeScaleDB Reference 바로가기](https://www.tigerdata.com/docs/reference/timescaledb/continuous-aggregates/refresh_continuous_aggregate)
+→ 따라서 CAGG 구조에서는  
+**정합성이 refresh 수행 여부에 의존하는 특성을 가진다.**
+
+---
+
+### 7.9 Real-time Aggregate 동작 검증 및 한계 분석
+
+real-time aggregate(`materialized_only = false`) 설정을 적용한 CAGG에 대해  
+실제 데이터 삽입 및 refresh 시나리오 기반 검증을 수행하였다.
+
+검증은 다음 흐름으로 진행하였다.
+
+1. 특정 시점까지 refresh 수행 (materialized 상태)
+2. watermark 이후 구간에 raw 데이터 추가
+3. refresh 없이 조회 → real-time merge 확인
+4. 이후 refresh 수행 → materialized 반영 및 watermark 증가 확인
+5. watermark 이전 구간(backfill)에 raw 데이터 삽입 → 반영 여부 검증
+
+---
+
+### 7.9.1 성능 비교 (90주봉 조회 기준, 중앙값)
+
+| 구분 | 상태 | Watermark 기준 | Execution Time (ms) | Planning Time (ms) | 특징 |
+|------|------|----------------|---------------------|--------------------|------|
+| Baseline | materialized-only | 최신까지 반영 | **0.707** | 4.085 | 순수 materialized 조회 |
+| RT Aggregate | raw 추가 후 미반영 | watermark 이후 raw 존재 | **0.690** | 4.165 | real-time merge 수행 |
+| Refresh 이후 | materialized 재반영 | watermark 증가 | **0.686** | 4.217 | 다시 materialized 상태 |
+
+→ 90주봉 조회 기준에서 **real-time aggregate와 materialized-only 간 성능 차이는 거의 없었다.**  
+(약 0.02ms 수준으로 오차 범위)
+
+---
+
+### 7.9.2 Watermark 및 Real-time Aggregate 동작 검증
+
+실험 결과 다음과 같은 특성을 확인하였다.
+
+- raw 데이터 insert만으로는 watermark가 증가하지 않음
+- watermark는 `refresh_continuous_aggregate()` 수행 시에만 증가
+- real-time aggregate는 watermark 이후 구간에 대해서만 raw 데이터를 병합
+- watermark 이전 구간은 materialized 결과를 그대로 사용
+
+즉, CAGG는 다음과 같은 구조로 동작한다.
+
+```
+[ materialized ] | watermark | [ real-time aggregate ]
+```
+
+
+---
+
+### 7.9.3 Backfill 데이터 반영 검증
+
+watermark 이전 구간에 대해 raw 데이터를 삽입한 경우:
+
+- real-time aggregate → 적용되지 않음
+- materialized view → 기존 값 유지
+
+즉, 다음 조건에서는 데이터가 조회에 반영되지 않는다.
+
+- 이미 refresh된 bucket (watermark 이전)
+- 이후 해당 bucket 범위에 raw 데이터 삽입
+- 추가 refresh 미수행
+
+→ **backfill 데이터는 반드시 refresh를 통해서만 반영됨을 확인하였다.**
+
+---
+
+### 7.9.4 Real-time Aggregate의 구조적 한계
+
+real-time aggregate는 다음과 같은 구조적 한계를 가진다.
+
+- 최신 구간 보완에는 유효
+- 과거 bucket 정합성 보장 불가
+- watermark 이전 구간은 raw merge 대상이 아님
+
+특히 다음 시나리오에서 문제가 발생할 수 있다.
+
+- 특정 시점까지 refresh 수행 → watermark 이동
+- 이후 해당 bucket에 late data(backfill) 삽입
+- refresh 실패 또는 누락
+
+이 경우:
+
+- materialized 결과는 과거 상태 유지
+- real-time aggregate는 해당 구간을 보지 않음
+
+→ **조회 결과와 실제 데이터 간 부정합 발생 가능**
+
+---
+
+### 7.9.5 최종 분석
+
+- real-time aggregate는 최신 데이터 보완에는 효과적이며,
+  성능 오버헤드 또한 거의 없는 수준으로 확인되었다.
+
+- 그러나 watermark 이전 구간에 대한 데이터 정합성은 보장하지 않으며,
+  **정합성은 refresh 수행 여부에 전적으로 의존한다.**
+
+따라서 CAGG 구조는 다음과 같이 역할이 분리된다.
+
+- **real-time aggregate**: 최신성 보완
+- **refresh**: 정합성 보장 및 materialization
+
+---
+
+### 7.9.6 운영 관점 결론
+
+본 실험을 통해 다음과 같은 운영 전략 필요성을 확인하였다.
+
+- refresh 작업 실패 시 재시도 및 모니터링 체계 필요
+- 최근 구간에 대한 주기적 재-refresh 전략 필요
+- watermark를 과도하게 빠르게 이동시키지 않도록 refresh window 설계 필요
+
+즉, real-time aggregate는 보조 수단이며,  
+**데이터 정합성은 refresh 정책 설계에 의해 결정된다.**
+
+
+### 7.9.7 배치 기반 정합성 보장 전략
+
+데이터 적재와 CAGG refresh를 하나의 배치 단위로 관리하여
+정합성 누락 가능성을 최소화한다.
+
+배치는 다음과 같은 단계로 구성한다.
+
+1. 원천 API 데이터 수집
+2. raw 테이블 적재
+3. 적재 건수 검증
+4. 최근 완료된 버킷 구간 CAGG refresh 수행
+5. 검증 쿼리 수행
+6. 성공 시 배치 완료 처리
+
+이때 refresh는 전체 구간이 아닌,
+**최근 2개 bucket 범위에 대해서만 수행**하도록 제한한다.
+
+또한, 현재 진행 중인 bucket(예: 이번 주)은 refresh 대상에서 제외한다.
+
+→ 이는 CAGG refresh가 refresh window에 완전히 포함된 bucket만 materialization 하는 특성과,  
+진행 중 bucket을 포함할 경우 반복적인 재계산이 발생하는 비효율을 고려한 설계다.
+
+따라서
+
+- **완료된 bucket만 refresh 대상으로 포함하고**
+- **진행 중 bucket은 real-time aggregate로 조회 시점에 보완한다**
+
+위 방식으로 역할을 분리한다.
+
+→ 이는 real-time aggregate가 watermark 이후 최신 구간을 보완하는 구조를 활용하여  
+불필요한 전체 refresh 비용을 줄이기 위함이다.
+
+---
+
+#### ✔ Late Data 대응 전략
+
+배치 처리 과정에서 데이터 누락 또는 지연 도착(late arrival)이 발생할 수 있으므로,
+다음과 같은 보완 전략을 적용한다.
+
+- daily batch에서는 최근 2개 bucket만 refresh 수행한다
+- 진행 중 bucket은 refresh 대상에서 제외하고 real-time aggregate로 처리한다
+- watermark 이전 구간에 대한 backfill은 real-time aggregate로 반영되지 않는다
+- 따라서 해당 구간은 별도의 검증 및 재처리 대상이 된다
+
+---
+
+#### ✔ 주기적 정합성 검증 (Reconciliation)
+
+일 배치만으로는 watermark 이전 구간의 정합성을 보장할 수 없기 때문에,
+주기적인 검증 작업을 추가한다.
+
+- 영업일이 아닌 시점(예: 매주 토요일)에 크론 작업을 수행한다
+- raw 데이터와 CAGG 결과를 비교하여 누락 데이터를 탐지한다
+- 누락이 확인된 bucket 범위에 대해 추가 refresh를 수행한다
+
+이를 통해 다음 문제를 해결한다.
+
+- late data로 인한 backfill 누락
+- refresh 실패 또는 일부 누락
+- watermark 이전 구간 정합성 붕괴
+
+---
+
+#### ✔ 최종 정합성 모델
+
+본 시스템은 다음과 같은 계층 구조로 정합성을 보장한다.
+
+- **real-time aggregate**: 최신 데이터 보완 (low latency)
+- **daily refresh (최근 bucket)**: 단기 정합성 확보
+- **weekly reconciliation**: 장기 정합성 보장
+
+즉, 단일 방식이 아닌
+
+- real-time aggregate로 최신 데이터를 보완하고
+- refresh와 검증 과정을 통해 과거 구간의 정합성을 확보하는
+
+구조로 설계한다.
+
+### ✔ 최종 설계 결정
+
+본 실험을 통해 real-time aggregate는 watermark 이후 최신 구간을 보완하는 데 있어
+성능 오버헤드 없이 효과적으로 동작함을 확인한다.
+
+특히 서비스 요구사항인 90주봉 조회 기준에서는
+materialized-only 조회와 비교하여 성능 차이가 거의 발생하지 않으며,
+이를 통해 real-time aggregate를 적용하더라도 성능 부담은 사실상 없다고 판단한다.
+
+다만, watermark 이전 구간에 대한 backfill 데이터는 반영되지 않기 때문에
+정합성은 refresh 정책에 의존하는 구조적 한계를 가진다.
+
+따라서 본 시스템에서는
+
+- 최신 데이터는 real-time aggregate로 보완하고
+- 과거 데이터는 refresh 및 검증 과정을 통해 정합성을 확보하는
+
+방식으로 역할을 분리하여 최종 설계를 구성한다.
+
+
+[→TimeScaleDB CAGG Reference 바로가기](https://www.tigerdata.com/docs/reference/timescaledb/continuous-aggregates/refresh_continuous_aggregate)
