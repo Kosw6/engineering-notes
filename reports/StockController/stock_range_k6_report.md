@@ -453,9 +453,8 @@ CAGG는 time_bucket 기반으로 변경된 구간(refresh window)에 대해서�
 CAGG는 backing hypertable에 집계 결과를 저장하여
 대용량 시계열 데이터 환경에서 효율적인 성능과 확장성을 제공한다.
 
-또한 CAGG는 refresh 시 refresh window에 완전히 포함된 bucket만 재계산되며,  
-진행 중인 bucket은 materialized 데이터에 반영되지 않는다.<br>  
-최신 데이터는 별도의 raw 기반 계산 또는 real-time aggregate를 통해 조회 시점에 보완된다.
+CAGG는 refresh 시 refresh window에 완전히 포함된 bucket만 재계산되며<br>  진행 중인 bucket을 강제로 refresh window를 늘려 미래 시점에서 진행하게 된다면 정합성 관리 비용 증가 및 watermark증가로 인해 real-time aggrate를 활용할 수 없다.<br>  
+따라서 최신 데이터는 별도의 raw 기반 계산 또는 real-time aggregate를 통해 조회 시점에 보완하는 방식을 공식 문서에서도 권장한다.
 
 ### 7.2 주간 CAGG vs Raw 집계 성능
 
