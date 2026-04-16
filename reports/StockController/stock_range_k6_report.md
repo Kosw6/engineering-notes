@@ -448,12 +448,12 @@ refresh 실패 또는 누락 시 데이터 정합성 문제가 발생할 수 있
 
 일반 Materialized View는 refresh 시 전체 데이터를 재계산하는 반면,<br>
 CAGG는 time_bucket 기반으로 변경된 구간(refresh window)에 대해서만 재계산을 수행하여,
-전체 재계산을 수행하는 일반 Materialized View 대비 효율적인 갱신이 가능하다..<br>
+전체 재계산을 수행하는 일반 Materialized View 대비 효율적인 갱신이 가능하다.<br>
 
 CAGG는 backing hypertable에 집계 결과를 저장하여
 대용량 시계열 데이터 환경에서 효율적인 성능과 확장성을 제공한다.
 
-CAGG는 refresh 시 refresh window에 완전히 포함된 bucket만 재계산되며<br>  진행 중인 bucket을 강제로 refresh window를 늘려 미래 시점에서 진행하게 된다면 정합성 관리 비용 증가 및 watermark증가로 인해 real-time aggrate를 활용할 수 없다.<br>  
+CAGG는 refresh 시 refresh window에 완전히 포함된 bucket만 재계산되며<br>  진행 중인 bucket을 강제로 refresh window를 늘려 미래 시점에서 진행하게 된다면 watermark증가로 인해 real-time aggregate를 활용할 수 없으며 동시에 정합성 관리 비용이 증가하게 된다.<br>  
 따라서 최신 데이터는 별도의 raw 기반 계산 또는 real-time aggregate를 통해 조회 시점에 보완하는 방식을 공식 문서에서도 권장한다.
 
 ### 7.2 주간 CAGG vs Raw 집계 성능
