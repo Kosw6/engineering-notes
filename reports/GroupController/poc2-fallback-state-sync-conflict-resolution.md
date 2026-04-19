@@ -1,4 +1,4 @@
-# PoC 2 - Kafka + Redis 기반 Fallback 및 충돌 제어
+# PoC 2 - Kafka + Redis 기반 Failover & Fallback 및 충돌 제어
 
 ---
 
@@ -23,7 +23,7 @@
 
 본 PoC에서는 이를 해결하기 위해 다음 구조를 설계하였다.
 
-* fallback 서버로 트래픽 우회
+* failover 서버로 트래픽 우회
 * Kafka 기반 이벤트 동기화
 * Redis 기반 Draft 상태 관리 및 충돌 감지
 
@@ -40,7 +40,7 @@
 ### Gateway
 
 * shard 기반 라우팅
-* fallback 서버 선택
+* failover 서버 선택
 
 ### Core
 
@@ -59,7 +59,7 @@
 
 ## 4. 핵심 설계
 
-### 4.1 Fallback 라우팅
+### 4.1 Failover 라우팅
 
 ```json
 {
@@ -76,7 +76,7 @@ RouteDecision decision = wsShardRouter.route(groupId, instances);
 ```
 
 * groupId 기반 slot 계산
-* shard 우선순위 기반 fallback 선택
+* shard 우선순위 기반 failover 서버 선택
 
 ---
 
@@ -249,7 +249,7 @@ shard 장애 상황에서도 편집 기능 정상 동작
 
 ## 7. 실제 검증 로그 (E2E)
 
-### 7.1 Gateway Fallback 동작
+### 7.1 Gateway Failover 동작
 
 정상 라우팅
 
@@ -261,7 +261,7 @@ shard 장애 상황에서도 편집 기능 정상 동작
 }
 ```
 
-fallback 발생
+Failover 발생
 
 ```json
 {

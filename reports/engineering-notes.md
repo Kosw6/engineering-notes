@@ -52,7 +52,7 @@
 - fanout 부하 분산 확인
 
 [문서 링크 바로가기](./GroupController/poc1-websocket-sharding-load-distribution.md)
-#### PoC 2 — Fallback
+#### PoC 2 — Failover & Fallback
 - 장애 시 다른 인스턴스로 라우팅
 - Redis 기반 편집 상태 유지 및 충돌 제어
 
