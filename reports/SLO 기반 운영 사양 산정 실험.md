@@ -377,3 +377,8 @@ SLO: p95 ≤ 300ms
 > 본 실험은 성능 향상이 아니라
 > SLO를 만족하는 인프라를 찾는 비용 최적화 과정
 
+이후, 도출된 운영 설정에 대해  
+Thread 수 및 Hikari Connection Pool 사이즈가 실제 latency에 미치는 영향을  
+context switching 관점에서 추가 검증하였다.
+
+[Thread / Hikari / Context Switching 분석 바로가기](./쓰레드와%20커넥션%20풀%20설정에%20따른%20컨텍스트%20스위칭%20분석.md)
