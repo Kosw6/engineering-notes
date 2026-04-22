@@ -65,6 +65,33 @@
 
 [문서 링크 바로가기](./GroupController/poc3-failback-kafka-replay-recovery.md.md)
 
+### 6. Performance Engineering (Thread / Connection / OS)
+
+- Thread 수와 Context Switching 관계 분석
+- HikariCP pool size와 scheduling overhead 영향 검증
+- nvcswch / cswch 기반 latency 상승 원인 분석
+- 최적 Thread / Hikari 설정 도출
+
+[문서 링크 바로가기](./쓰레드와%20커넥션%20풀%20설정에%20따른%20컨텍스트%20스위칭%20분석.md)
+
+### 7. Infrastructure Optimization & SLO
+
+- AWS 환경에서 SLO(p95 ≤ 300ms) 기준 성능 검증
+- App-DB 분리 효과 분석
+- 다운사이징 실험 (4/16 → 2/8 → 2/4)
+- 비용 대비 최적 운영 사양 도출
+
+[문서 링크 바로가기](./SLO%20기반%20운영%20사양%20산정%20실험.md)
+
+### 8. Failure Handling & Recovery Design
+
+- Redis / Kafka / DB 장애 시 대응 전략
+- Degraded Mode 설계 및 동작 정의
+- Replay 기반 정합성 복구 구조
+- Failover / Fallback / Failback 분리 설계
+
+[문서 링크 바로가기](./시스템%20장애%20대응%20및%20복구%20전략.md)
+
 ---
 
 ## Tech Stack
@@ -119,3 +146,28 @@
 
 이는 결과를 포장하기보다,  
 실제 엔지니어링 의사결정 과정을 그대로 남기기 위함입니다.
+
+본 레포지토리는 단순히 “성능을 개선한 결과”가 아니라,
+
+- 어떤 가설을 세웠고
+- 어떤 방식으로 측정하고 검증했으며
+- 어떤 선택을 했고, 왜 버렸는지
+- 그리고 그 선택이 시스템 전체(성능, 비용, 안정성)에 어떤 영향을 주었는지
+
+를 기록하는 것을 목표로 합니다.
+
+또한,
+
+- Thread / Connection / GC와 같은 런타임 레벨의 튜닝
+- 인프라 다운사이징 및 SLO 기반 운영 사양 도출
+- 장애 상황에서의 Degraded Mode 및 복구 전략
+
+까지 포함하여,
+
+**단일 기술 최적화가 아닌, 시스템 전체 관점에서의 균형점 탐색 과정**을 담고 있습니다.
+
+따라서 일부 결과는 "더 빠른 방법"이 존재하더라도  
+GC 증가, context switching 비용, 운영 복잡도, 장애 대응 한계 등의 이유로  
+최종적으로 채택되지 않았습니다.
+
+이러한 선택 과정 역시 실제 운영 환경에서는 중요한 의사결정 요소라고 판단했습니다.
