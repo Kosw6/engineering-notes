@@ -3,33 +3,115 @@
 # 🚀 Summary
 
 ## 🎯 문제 정의
-- Node 목록 조회 API에서 동일 조건 대비 Edge 대비 낮은 처리량 발생
-- RPS 증가 시 p95 급격히 증가 (목표 SLO 미달)
+Node 조회 API는 그래프 기반 탐색에서 핵심적으로 사용되며,  
+다수 사용자가 동시에 조회하는 구조에서 응답 지연이 전체 UX에 직접적인 영향을 준다.  
 
-## 🔍 핵심 원인
-- Lazy Loading 기반 N+1 쿼리 발생
-- Fetch Join 시 Row Explosion (10 → 100 rows)
-- JSON Aggregation 시 CPU/직렬화 비용 증가
-- Projection 사용 시 DTO 객체 생성 폭증 → GC 부담 증가
+초기 테스트에서 동일 조건 대비 Edge API보다 처리량이 낮았고,  
+RPS 증가 시 p95 latency가 급격히 상승하며 SLO를 만족하지 못하는 문제가 발생했다.
 
-## 🛠 해결 전략
-- Fetch 전략 비교 실험 (Lazy / Batch / Fetch Join)
-- JSON Aggregation → 성능 저하로 미채택
-- Projection vs Fetch Join 비교 (JMC 기반 분석)
-- 링크 테이블에 note_subject 물리화 + 트리거 적용
-- content preview(20자)로 payload 축소
+Edge API에 비해 처리량이 낮았던 이유
+
+- Node 조회는 단순 데이터 조회가 아니라
+그래프 기반 객체 조립 과정이 포함되어 있어
+Edge API 대비 애플리케이션 레벨 비용이 더 크게 발생하였다.
+
+---
+
+## 🔄 단계별 문제 변화
+
+본 실험은 동일 조건에서의 단순 비교가 아니라,  
+**요구사항 변화와 데이터 구조 변화에 따라 단계적으로 성능 문제를 분석**하였다.
+
+### 1차 (기본 구조 비교)
+- 데이터셋: Node - Link (단순 구조)
+- 문제: Lazy Loading으로 인한 N+1 쿼리 발생
+- 결과: Fetch Join이 왕복 최소화로 가장 낮은 p95 달성
+
+---
+
+### 2차 (요구사항 변경: noteSubject 추가)
+- 데이터셋: Node - Link - Note (3-table 구조)
+- 문제: Row Explosion 발생 (10 → 100 rows)
+- 시도: JSON Aggregation으로 행 수 감소
+
+→ 결과:
+- 행 수 감소 성공
+- 하지만 집계/정렬/직렬화 비용 증가로 p95 악화
+
+→ 결론:
+- Row 수보다 CPU/직렬화 비용이 더 큰 병목
+
+---
+
+### 3차 (구조 변경: 스키마 최적화)
+- 전략: Link 테이블에 note_subject 물리화 + 트리거 적용
+- 목적: 조인 제거 + 애플리케이션 변경 최소화
+
+→ 결과:
+- 조인 비용 감소
+- Fetch Join 기반 구조 유지 가능
+
+---
+
+### 4차 (데이터 크기 영향 분석)
+- 목적: GC vs 직렬화 병목 분리
+- 데이터: content 500자 → 1만자 확장
+
+비교 결과:
+- 대용량 content를 애플리케이션으로 가져올 경우  
+  → Allocation 증가 → GC Pause → p95 붕괴
+
+- DB 레벨 preview(20자)는  
+  → GC 및 직렬화 비용 감소로 가장 안정적
+
+---
+
+## 🛠 최종 해결 전략
+
+- Fetch Join 기반 조회 구조 유지
+- Link 테이블에 note_subject 물리화
+- 목록 조회 시 content preview(20자)만 반환
+- 원문 content는 Lazy Loading으로 분리
+
+---
 
 ## 📈 결과
-- 1차 비교 기준 Fetch Join 목록 조회 p95: **2551ms(Lazy) → 413ms(Fetch Join)** 
-- Lazy 대비 최대 **6배 이상 성능 개선**
-- Projection 대비 Fetch Join이 **GC 안정성 + 메모리 효율 우수**
+
+- Lazy → Fetch Join 전환 시 p95 약 **6배 개선**
+- JSON Aggregation 대비 Fetch Join이 **p95 안정성 우수**
+- 대용량 content 처리 시 GC 영향이 주요 병목으로 확인
+
+→ 요구사항 변화에도 불구하고  
+**안정적인 응답 분포를 유지하는 구조 확보**
+
+- 단 해당 구조는 105RPS 구간에서 SLO를 만족하며 이어질 [Hot path 구조 개선](./JFR/JMC를%20활용한%20Allocation%20기반%20성능%20병목%20분석.md)을 통해 SLO를 만족하는 처리 구간의 향상(105RPS -> 130RPS)을 이루어 냈다
+
+---
 
 ## 💡 핵심 인사이트
-- 성능 병목은 DB가 아니라 **객체 생성량 + GC**
-- Fetch Join은 단순 왕복 감소를 넘어, **부모 엔티티 Deduplicate를 통한 메모리/GC 최적화 효과**가 있었다
-- Row Explosion은 DB 문제가 아니라 **애플리케이션 레벨 부담으로 전이됨**
 
-- → 단순 쿼리 수 감소가 아닌, 객체 생성 수와 GC 비용까지 고려한 구조적 최적화를 수행하였다.
+- 성능 병목은 DB 쿼리가 아니라  
+  **객체 생성량, GC, 직렬화 비용의 복합 문제**
+
+- Row Explosion은 DB 문제가 아니라  
+  **애플리케이션 레벨 부담으로 전이됨**
+
+- 행 수 감소(JSON Aggregation)보다  
+  **객체 생성 구조와 GC 비용이 p95에 더 큰 영향**
+
+- 데이터 크기 증가 시  
+  **GC(STW)가 tail latency를 지배**
+
+---
+
+## 🧠 최종 의사결정
+
+- JSON Aggregation: 행 수 감소는 성공했으나 CPU 비용 증가로 제외
+- Projection: DTO 생성량 증가로 GC 부담 증가
+- Fetch Join: 부모 Deduplicate로 메모리/GC 안정성 확보
+
+→ 최종적으로  
+**Fetch Join + 데이터 축소 전략(content preview)** 을 선택
 
 
 ## 📋 목차

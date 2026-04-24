@@ -2,6 +2,110 @@
 
 # 📄 PoC 1 - WebSocket 샤딩 기반 부하 분산
 
+## 🚀 Summary
+
+### 🎯 문제 정의
+WebSocket 기반 협업 시스템에서 브로드캐스트 비용은  
+room 크기에 비례하여 증가하며, 단일 서버 구조에서는  
+fanout 비용이 집중되어 처리 한계에 도달할 수 있다.
+
+특히 동일 인스턴스에서 여러 그룹을 동시에 처리할 경우  
+broadcast 처리량과 JVM 리소스 사용이 급격히 증가하는 문제가 발생한다.
+
+---
+
+### 🔍 핵심 원인
+단일 인스턴스 구조에서는 모든 그룹의 이벤트가  
+하나의 서버에서 처리되며,  
+
+fanout 비용이 다음과 같이 증가한다.
+
+fanout ≈ roomSize × sender × rate
+
+이로 인해 CPU, GC, 메모리 압력이 단일 JVM에 집중된다.
+
+---
+
+### 🛠 해결 전략 (그룹 기반 샤딩)
+- groupId 기준으로 shard 결정
+- 동일 그룹은 동일 서버에 유지 (fanout locality 확보)
+- Gateway를 통해 라우팅 수행
+
+```text
+slot = groupId % 32
+shard = slot / (32 / instanceCount)
+````
+
+→ cross-node broadcast 없이 local fanout 유지
+
+---
+
+### 📈 결과
+
+* 단일 인스턴스: **159k send attempts**
+* 샤딩 구조: **79k + 79k (서버별 절반 분산)**
+
+또한 JVM 레벨에서도:
+
+* CPU 사용률 감소
+* GC 횟수 감소
+* Memory 압력 완화
+
+→ 단순 연결 분산이 아닌
+**실제 broadcast 처리 비용 분산 확인**
+
+---
+
+## 💡 핵심 인사이트
+
+* WebSocket 확장의 병목은 연결 수가 아니라 **fanout 비용**
+* 랜덤 분산이 아니라 **group 기반 분산이 locality 측면에서 유리**
+* 샤딩은 단순 scale-out이 아니라
+  **JVM 리소스 압력을 분산시키는 전략**
+
+---
+
+## ⚠️ 한계 및 확장 방향
+
+* 특정 그룹이 커질 경우 단일 shard에 fanout 부하가 집중되는 hotspot 문제가 발생할 수 있다.
+
+* 그룹을 내부적으로 분할(sub-sharding)하는 방식은  
+  논리적으로는 부하를 나눌 수 있지만,  
+  동일 이벤트를 전체 사용자에게 전달해야 하는 협업 특성상  
+  **총 fanout 비용 자체는 감소하지 않는다.**
+
+* 즉, 단일 인스턴스 기준에서는  
+  fanout 처리량이 그대로 유지되기 때문에  
+  근본적인 병목 해소에는 한계가 존재한다.
+
+* 따라서 확장 방향은 fanout 총량을 줄이는 것이 아니라,  
+  **fanout 처리 부담을 여러 인스턴스로 분산하는 구조**로 접근해야 한다.
+
+* 이를 위해 다음과 같은 multi-node broadcast 구조를 고려하였다:
+  - Redis Pub/Sub: low-latency fanout 분산
+  - Kafka: 이벤트 내구성 및 replay 기반 확장
+
+→ 결론적으로,  
+sub-sharding은 구조적 분할에 불과하며,  
+실제 성능 확장은 **multi-node fanout 분산 구조에서 달성 가능하다.**
+
+위 설계를 기반으로 multi-node 환경에서의 fanout 분산 및
+이벤트 전파/복구 시나리오를 실제로 검증한 결과는 [다음 PoC](./full-websocket-room-with-dynamic-sharding.md)에서 확인할 수 있다.
+
+---
+
+## 🧠 최종 결론
+
+그룹 기반 샤딩 구조는
+
+* fanout locality 유지
+* cross-node 비용 제거
+* JVM 리소스 분산
+
+측면에서 효과적인 WebSocket 확장 전략임을 검증하였다.
+
+
+
 
 ## 📑 목차
 > 📌 각 항목을 클릭하면 해당 섹션으로 이동합니다.
