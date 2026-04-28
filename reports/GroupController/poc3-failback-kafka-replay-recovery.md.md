@@ -1,5 +1,81 @@
 # 📄 PoC 3 - Kafka 기반 WebSocket Failback & Recovery
 
+## 🚀 Summary
+
+### 🎯 문제 정의
+WebSocket 기반 실시간 시스템에서 다중 인스턴스 환경에서는  
+단순 failover만으로는 장애 복구가 불가능하며,  
+
+장애 동안 누락된 이벤트로 인해  
+복구된 서버의 상태가 최신 상태와 불일치하는 문제가 발생한다.
+
+---
+
+### 🔍 핵심 원인
+- WebSocket 서버는 상태를 가지는 구조 (stateful)
+- 장애 발생 시 해당 서버는 이벤트를 수신하지 못함
+- 단순 재시작만으로는 상태 복구 불가능
+- failover 이후 failback 시 데이터 정합성 깨짐
+
+---
+
+### 🛠 해결 전략
+- Kafka를 이벤트 로그 저장소로 활용
+- Catch-up Consumer를 통해 장애 기간 동안의 이벤트 replay
+- Broadcast / Catch-up Consumer 분리
+
+```text
+Broadcast → 실시간 처리
+Catch-up → 복구 replay
+````
+
+* Gateway 기반 lifecycle orchestration
+* 서버 상태 기반 제어 (UP / READY / DRAINING)
+* Drain → reconnect 구조로 안전한 failback 수행
+
+---
+
+### 📈 결과
+
+* Kafka replay를 통해 **이벤트 유실 없이 상태 복구**
+* 장애 중에도 서비스 연속성 유지
+* 복구 후 서버를 안전하게 운영 그룹으로 재편입
+* 클라이언트 재연결을 통해 자연스러운 서버 전환
+
+---
+
+### 💡 핵심 인사이트
+
+* WebSocket 서버는 stateless failover로는 복구 불가능
+* Kafka는 단순 메시지 큐가 아니라
+  **복구 가능한 이벤트 로그 저장소로 활용해야 함**
+* 복구 과정에서는
+  **Catch-up → Ready → Drain → Failback** 순서의 lifecycle 관리가 핵심
+* Gateway를 통한 중앙 제어가
+  분산 시스템의 일관성을 유지하는 데 중요
+
+---
+
+### ⚠️ 한계 및 확장 방향
+
+* Kafka는 at-least-once 특성으로 중복 이벤트 가능
+* replay 시 중복 반영 방지를 위한 idempotent 처리 필요
+* 대규모 환경에서는 partition / consumer scaling 고려 필요
+
+---
+
+### 🧠 최종 결론
+
+Kafka 기반 replay와 Gateway 중심 orchestration을 통해
+
+* 장애 이후 상태 복구
+* 서비스 연속성 유지
+* 안전한 failback 전환
+
+을 모두 달성한
+**실시간 분산 시스템 복구 구조를 설계 및 검증하였다.**
+
+
 ---
 ## 📑 목차
 
