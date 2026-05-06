@@ -1,8 +1,26 @@
 # Kafka 장애 대응 전략 — Outbox Pattern
 
-> **검증 환경**: Docker Compose 멀티 인스턴스 (app-1:8080, app-2:8082), PostgreSQL 공유 DB  
 > **검증 일자**: 2026-05-06  
-> **대상 이벤트**: `RELIABLE` 타입 — NODE_UPDATED (캔버스 노드 변경)
+> **대상 이벤트**: `RELIABLE` 타입 — EDIT_START / EDIT_END / NODE_UPDATED
+>
+> | 역할 | 사양 | 비고 |
+> |------|------|------|
+> | App (app-1, app-2) | EC2 c6i.large (2 vCPU / 4GB) | 단일 인스턴스, Docker Compose 컨테이너 분리 |
+> | PostgreSQL | EC2 c6i.large (2 vCPU / 4GB) | 공유 DB — 두 인스턴스가 동일 outbox 테이블 사용 |
+> | Kafka | EC2 m6i.large (2 vCPU / 8GB) | 브로커 1대 |
+> | Redis | EC2 m6i.large (2 vCPU / 8GB) | Pub/Sub + 세션 캐시 |
+> | Loki | EC2 t3.large (2 vCPU / 8GB) | 로그 수집 |
+>
+> **부하 설정 (k6)**
+>
+> | 항목 | 값 |
+> |------|-----|
+> | 툴 | k6 constant-arrival-rate |
+> | 가상 유저 | 50명 (preAllocatedVUs=50, maxVUs=200) |
+> | 요청 속도 | 30 req/s |
+> | 테스트 시간 | 8분 |
+> | 시나리오 | autosave 모드: edit-start → autosave × 3 (0.2s 간격) → edit-cancel |
+> | | save 모드: edit-start → GET node → think (0~2s) → PATCH save |
 
 ---
 
@@ -38,7 +56,12 @@ DegradableReliablePublisher
 
 > **실측 증거** — Kafka 장애 구간 중 Edit flow error rate = 0, API 처리율 정상 유지  
 > ![Reliable Baseline 대시보드](../image/degrade/reliable-baseline-dashboard.png)  
-> `Kafka publish rate by result`: failed 급증 구간에도 `Edit flow error rate = 0`, `Edit Flow API rate` 정상 → 클라이언트 무영향 직접 증거
+> 대시보드: `trader-realtime-degrade-app` — **Trader Realtime Degrade Mode — App Metrics**  
+> | 패널 | 집계 | 설명 |
+> |------|------|------|
+> | `Kafka publish rate by result` | `rate [1m]` | failed 급증 구간 시각화 |
+> | `Edit flow error rate` | `rate [1m]` | Kafka 장애 중 **0** 유지 → 클라이언트 무영향 |
+> | `Edit Flow API rate` | `rate [1m]` | POST/PATCH 처리율 정상 유지 확인 |
 
 ---
 
@@ -233,9 +256,14 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 ### Grafana 증적 — outbox 저장 / 재발행
 
 > ![Reliable Baseline 대시보드](../image/degrade/reliable-baseline-dashboard.png)
-> - `Outbox save success rate`: Kafka failed 구간과 정확히 mirror — outbox가 Kafka를 대체 저장
-> - `Kafka publish rate by result`: attempt 유지, success=0, failed 급증 → 장애 구간 명확
-> - `Outbox save p95 latency`: 최대 22.1s (outbox 저장 자체의 지연)
+> 대시보드: `trader-realtime-degrade-app` — **Trader Realtime Degrade Mode — App Metrics**  
+> | 패널 | 집계 | 설명 |
+> |------|------|------|
+> | `Kafka publish rate by result` | `rate [1m]` | attempt 유지, success=0, failed 급증 → 장애 구간 명확 |
+> | `Outbox save success rate` | `rate [1m]` | Kafka failed 구간과 정확히 mirror — outbox 대체 저장 동작 |
+> | `Outbox save p95 latency` | `histogram_quantile(0.95) [1m]` | 최대 22.1s (outbox 저장 지연) |
+> | `outbox saved (Kafka 장애 중)` | `rate [30s]` (Loki) | `[REALTIME-OUTBOX-SAVED]` 로그 발생률 |
+> | `outbox replayed (Kafka 복구 후)` | `rate [30s]` (Loki) | `[REALTIME-OUTBOX-REPUBLISH-SENT]` 로그 발생률 |
 
 ### Grafana 증적 — Kafka Offset catch-up (개선 전 vs 개선 후)
 
@@ -243,15 +271,21 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 
 **개선 전 (LOB 버그, 스케줄러 크래시)**
 > ![Kafka Offset 개선 전](../image/degrade/kafka-offset-before-fix.png)
-> - Kafka 복구 후 Topic Offset 기울기 **이전과 동일** → outbox 재발행 없음
-> - Lag: -7 수준, consumer가 따라잡을 이벤트 자체가 없었음
-> - 원인: `@Lob` 버그로 스케줄러가 크래시 → PENDING 이벤트 드레인 불가
+> 대시보드: `trader-realtime-degrade-app` — Kafka Broker 패널  
+> | 패널 | 집계 | 설명 |
+> |------|------|------|
+> | `Topic Offset` | 절대값 (scrape interval) | 복구 후 기울기 이전과 동일 → 재발행 없음 |
+> | `Lag (단일 그룹 집중)` | 절대값 | -7 수준, catch-up 이벤트 없음 |
+> | `Kafka CPU%` | 절대값 | 복구 시점 spike 미미 |
 
 **개선 후 (TEXT 타입, @Transactional 추가)**
 > ![Kafka Offset 개선 후](../image/degrade/kafka-offset-after-fix.png)
-> - Kafka 복구 후 Topic Offset 기울기 **급증** → outbox에 쌓인 이벤트 일괄 재발행
-> - Lag: **-25 급락** → consumer가 밀린 이벤트 빠르게 소비 (catch-up 완료)
-> - Kafka CPU: 복구 시점 spike 후 정상화
+> 대시보드: `trader-realtime-degrade-app` — Kafka Broker 패널  
+> | 패널 | 집계 | 설명 |
+> |------|------|------|
+> | `Topic Offset` | 절대값 (scrape interval) | 복구 후 기울기 **급증** → outbox 재발행 이벤트 유입 |
+> | `Lag (단일 그룹 집중)` | 절대값 | **-25 급락** → consumer catch-up 완료 |
+> | `Kafka CPU%` | 절대값 | 복구 시점 spike 후 정상화 |
 
 ---
 
@@ -260,9 +294,12 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 outbox 저장 및 재발행이 DB에 미치는 영향을 측정하였다.
 
 > ![DB latency during outbox](../image/degrade/db-latency-during-outbox.png)
-> - `sync latency`: outbox 저장/재발행 구간 소폭 상승 후 즉시 정상화
-> - `I/O throughput`: WAL checkpoint 패턴, 이상 없음
-> - **결론**: outbox 운영이 DB에 미치는 부하는 미미하며 서비스 영향 없음
+> 대시보드: `trader-realtime-degrade-app` — DB eBPF 패널  
+> | 패널 | 집계 | 설명 |
+> |------|------|------|
+> | `평균 latency-1m` | `avg [1m]` | sync latency 소폭 상승 후 즉시 정상화 |
+> | `DB p95 latency` | `histogram_quantile(0.95) [1m]` | 장애 구간 중 이상 없음 |
+> | `I/O throughput` | 절대값 | WAL checkpoint 패턴, 서비스 영향 없음 |
 
 ---
 
