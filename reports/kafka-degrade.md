@@ -29,6 +29,25 @@
 실시간 캔버스 협업에서 **Kafka 브로커 장애** 발생 시 이벤트 유실 없이 복구되는지 검증한다.  
 WebSocket 전달(Redis Pub/Sub)과 이벤트 로그(Kafka)를 분리 운영하여, Kafka 다운 중에도 클라이언트에는 실시간 반응성을 유지하면서 이벤트를 DB outbox에 보관 후 복구 시점에 재발행하는 전략이다.
 
+### 왜 Kafka를 hot path에서 분리했는가
+
+초기에는 Reliable 이벤트를 Kafka 중심으로 전파하는 구조를 고려했다.  
+하지만 Kafka broker 장애 또는 producer 지연이 실시간 협업 UX 전체로 전파될 수 있다고 판단했다.
+
+따라서 Redis Pub/Sub을 저지연 실시간 전파 계층으로 분리하고,  
+Kafka는 replay/recovery를 위한 durable log 계층으로 역할을 제한하였다.
+
+이를 통해 Kafka 장애 시에도 클라이언트 편집 흐름은 유지하고,  
+복구 가능성만 제한되도록 장애 범위를 축소했다.
+
+### 관련 문서
+
+이 설계 결정에 따른 **UX 영향 및 아키텍처 trade-off**는 별도 문서에서 다룬다.
+
+> 📄 [장애 시나리오별 UX 영향 분석 — Kafka / Redis / degrade mode](./kafka-ux-tradeoff.md)  
+> Kafka 미사용 / hot-path 직접 사용 / degrade 없음 / 현재 구조 4가지 케이스를  
+> 유저 플로우 · 장애 전파 범위 · UX 차이 · 복구 가능 여부 관점에서 비교한다.
+
 ---
 
 ## 2. 아키텍처 — 이중 발행 경로
@@ -262,6 +281,12 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 > | `Kafka publish rate by result` | `rate [1m]` | attempt 유지, success=0, failed 급증 → 장애 구간 명확 |
 > | `Outbox save success rate` | `rate [1m]` | Kafka failed 구간과 정확히 mirror — outbox 대체 저장 동작 |
 > | `Outbox save p95 latency` | `histogram_quantile(0.95) [1m]` | 최대 22.1s (outbox 저장 지연) |
+>
+> **Latency trade-off 해석**  
+> Outbox는 Kafka 대비 높은 latency를 보였는데(Kafka: 1~2ms, Outbox: ~5ms+),  
+> 이는 DB transaction 및 durable write 비용을 직접 부담하기 때문이다.  
+> 반면 Kafka는 append-only log 기반의 비동기 publish 구조이므로 낮은 latency를 유지했다.  
+> 즉 Outbox는 성능보다 durability를 우선한 fallback 계층으로 설계하였다.
 > | `outbox saved (Kafka 장애 중)` | `rate [30s]` (Loki) | `[REALTIME-OUTBOX-SAVED]` 로그 발생률 |
 > | `outbox replayed (Kafka 복구 후)` | `rate [30s]` (Loki) | `[REALTIME-OUTBOX-REPUBLISH-SENT]` 로그 발생률 |
 
@@ -387,3 +412,5 @@ public boolean isDuplicate(String eventId) {
 | DB 부하 영향 | **미미** (sync latency 소폭 상승 후 정상화) |
 
 Kafka outbox 패턴은 브로커 완전 장애 상황에서도 **이벤트 유실 없이 자동 복구**됨을 실측으로 확인하였다.
+
+본 실험은 단순 Kafka 연동 검증이 아니라, 장애 발생 시 영향 범위를 제한하고 복구 자동화를 통해 MTTR을 줄이는 **운영 관점의 설계 검증**을 목표로 했다.
