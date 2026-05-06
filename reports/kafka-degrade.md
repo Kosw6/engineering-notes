@@ -86,7 +86,7 @@ PENDING ──[republish 성공]──→ SENT
 **포인트**
 - Redis(경로 A)는 1ms 이내 전달. Kafka 장애는 클라이언트에 무영향.
 - outbox는 공유 DB 테이블 → **어느 인스턴스든** PENDING을 발견하면 재발행 가능.
-- app-1이 저장한 이벤트를 app-2가 재발행 → 진정한 multi-instance 복구.
+- app-1이 저장한 이벤트를 app-2가 재발행 → multi-instance 복구.
 
 **Loki 로그 증적**
 
@@ -103,48 +103,67 @@ PENDING ──[republish 성공]──→ SENT
 
 ## 5. DB 상태 증적
 
-### 5-1. 장애 중 PENDING 확인
+### 5-1. 장애 중 — PENDING 누적
 
 ```sql
 -- Kafka 장애 구간 중 실행 (18:17 ~ 18:23)
-SELECT event_id, sub_type, status, retry_count, created_at
+SELECT status, sub_type, COUNT(*)
 FROM realtime_outbox
-WHERE status = 'PENDING'
-ORDER BY created_at ASC
-LIMIT 10;
+GROUP BY status, sub_type
+ORDER BY status, sub_type;
 ```
 
-| event_id | sub_type | status | retry_count | created_at |
-|----------|----------|--------|-------------|------------|
-| 735c533e-... | NODE_UPDATED | PENDING | 0 | 18:17:49.161 |
-| ...      | NODE_UPDATED | PENDING | 0 | 18:17:51.043 |
-| ...      | NODE_UPDATED | PENDING | 0 | 18:17:53.218 |
-
-→ 저장 즉시 `PENDING`, `retry_count=0` 확인.
-
-### 5-2. 복구 후 SENT 확인
-
-```sql
--- Kafka 복구 후 실행 (18:23 이후)
-SELECT event_id, sub_type, status, retry_count, sent_at, last_tried_at
-FROM realtime_outbox
-WHERE status = 'SENT'
-ORDER BY sent_at DESC
-LIMIT 10;
+```
+ status  |   sub_type   | count
+---------+--------------+-------
+ PENDING | EDIT_END     |  7155
+ PENDING | EDIT_START   |  4636
+ PENDING | NODE_UPDATED |  2521
+ SENT    | EDIT_END     |  5365
+ SENT    | EDIT_START   |  5254
+ SENT    | NODE_UPDATED |   117
 ```
 
-| event_id | sub_type | status | retry_count | sent_at | last_tried_at |
-|----------|----------|--------|-------------|---------|---------------|
-| 735c533e-... | NODE_UPDATED | SENT | 0 | 18:23:22.597 | 18:23:22.597 |
-| ...      | NODE_UPDATED | SENT | 0 | 18:23:22.603 | 18:23:22.603 |
+→ Kafka 다운 구간 동안 세 타입 모두 PENDING으로 쌓임. SENT는 장애 이전 정상 발행분.
 
-→ 복구 후 전량 `SENT` 전환, 유실 없음.
+### 5-2. 복구 진행 중 — 드레인 스냅샷
+
+스케줄러가 PENDING을 소진하는 중간 상태. PENDING이 줄고 SENT가 늘어나는 흐름이 실시간으로 관찰됨.
+
+### 5-3. 복구 완료 — 전량 SENT
 
 ```sql
--- 유실 검증: 복구 후 PENDING 잔존 여부
+-- AutoSave 타입 테스트(EDIT_START, EDIT_END) 복구 완료 후 최종 상태 (2026-05-06)
+SELECT status, sub_type, COUNT(*)
+FROM realtime_outbox
+GROUP BY status, sub_type
+ORDER BY status, sub_type;
+```
+
+```
+ status |   sub_type   | count
+--------+--------------+-------
+ SENT   | EDIT_END     | 12525
+ SENT   | EDIT_START   |  9904
+ SENT   | NODE_UPDATED |  2640
+```
+
+```sql
+-- PENDING 잔여 확인
 SELECT COUNT(*) FROM realtime_outbox WHERE status = 'PENDING';
--- result: 0
+--  count
+-- -------
+--      0
+
+-- FAILED 잔여 확인
+SELECT COUNT(*) FROM realtime_outbox WHERE status = 'FAILED';
+--  count
+-- -------
+--      0
 ```
+
+→ EDIT_START / EDIT_END / NODE_UPDATED 세 타입 전량 `SENT` 전환.  
+→ `PENDING = 0`, `FAILED = 0` — 이벤트 유실 없음.
 
 ---
 
