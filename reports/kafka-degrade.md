@@ -32,8 +32,8 @@ DegradableReliablePublisher
                                     └── RealtimeOutboxSaver → realtime_outbox (PENDING)
 ```
 
-두 경로는 **완전히 독립**이다.  
-- 경로 A(Redis)는 Kafka 장애와 무관하게 실시간 전달을 보장한다.  
+두 경로는 **완전히 독립**이다.
+- 경로 A(Redis)는 Kafka 장애와 무관하게 실시간 전달을 보장한다.
 - 경로 B(Kafka)가 실패해도 클라이언트 경험에는 영향 없고, outbox가 이벤트 로그를 보존한다.
 
 > **실측 증거** — Kafka 장애 구간 중 Edit flow error rate = 0, API 처리율 정상 유지  
@@ -87,6 +87,17 @@ PENDING ──[republish 성공]──→ SENT
 - Redis(경로 A)는 1ms 이내 전달. Kafka 장애는 클라이언트에 무영향.
 - outbox는 공유 DB 테이블 → **어느 인스턴스든** PENDING을 발견하면 재발행 가능.
 - app-1이 저장한 이벤트를 app-2가 재발행 → 진정한 multi-instance 복구.
+
+**Loki 로그 증적**
+
+> ![OUTBOX-SAVED Loki 로그](../image/degrade/loki-outbox-saved.png)  
+> `[REALTIME-OUTBOX-SAVED]` — 17:44:37.557, WARN, `RealtimeOutboxService`  
+> Kafka 장애 감지 즉시 outbox 저장, `http-nio-8080-exec-3` 스레드 (HTTP 요청 처리 중 동기 저장)
+
+> ![REPUBLISH-SENT Loki 로그](../image/degrade/loki-outbox-republish-sent.png)  
+> `[REALTIME-OUTBOX-REPUBLISH-SENT]` — 17:45:15.400, INFO, `RealtimeOutboxRepublishScheduler`  
+> Kafka 복구 후 재발행 성공, `scheduling-1` 스레드 (스케줄러가 별도 처리)  
+> SAVED → SENT 간격: **약 38초** (Kafka 장애 지속 시간 포함)
 
 ---
 
@@ -202,9 +213,9 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 
 ### Grafana 증적 — outbox 저장 / 재발행
 
-> ![Reliable Baseline 대시보드](../image/degrade/reliable-baseline-dashboard.png)  
-> - `Outbox save success rate`: Kafka failed 구간과 정확히 mirror — outbox가 Kafka를 대체 저장  
-> - `Kafka publish rate by result`: attempt 유지, success=0, failed 급증 → 장애 구간 명확  
+> ![Reliable Baseline 대시보드](../image/degrade/reliable-baseline-dashboard.png)
+> - `Outbox save success rate`: Kafka failed 구간과 정확히 mirror — outbox가 Kafka를 대체 저장
+> - `Kafka publish rate by result`: attempt 유지, success=0, failed 급증 → 장애 구간 명확
 > - `Outbox save p95 latency`: 최대 22.1s (outbox 저장 자체의 지연)
 
 ### Grafana 증적 — Kafka Offset catch-up (개선 전 vs 개선 후)
@@ -212,15 +223,15 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 개선 전후의 Topic Offset 기울기 비교가 outbox replay 동작을 가장 직접적으로 증명한다.
 
 **개선 전 (LOB 버그, 스케줄러 크래시)**
-> ![Kafka Offset 개선 전](../image/degrade/kafka-offset-before-fix.png)  
-> - Kafka 복구 후 Topic Offset 기울기 **이전과 동일** → outbox 재발행 없음  
-> - Lag: -7 수준, consumer가 따라잡을 이벤트 자체가 없었음  
+> ![Kafka Offset 개선 전](../image/degrade/kafka-offset-before-fix.png)
+> - Kafka 복구 후 Topic Offset 기울기 **이전과 동일** → outbox 재발행 없음
+> - Lag: -7 수준, consumer가 따라잡을 이벤트 자체가 없었음
 > - 원인: `@Lob` 버그로 스케줄러가 크래시 → PENDING 이벤트 드레인 불가
 
 **개선 후 (TEXT 타입, @Transactional 추가)**
-> ![Kafka Offset 개선 후](../image/degrade/kafka-offset-after-fix.png)  
-> - Kafka 복구 후 Topic Offset 기울기 **급증** → outbox에 쌓인 이벤트 일괄 재발행  
-> - Lag: **-25 급락** → consumer가 밀린 이벤트 빠르게 소비 (catch-up 완료)  
+> ![Kafka Offset 개선 후](../image/degrade/kafka-offset-after-fix.png)
+> - Kafka 복구 후 Topic Offset 기울기 **급증** → outbox에 쌓인 이벤트 일괄 재발행
+> - Lag: **-25 급락** → consumer가 밀린 이벤트 빠르게 소비 (catch-up 완료)
 > - Kafka CPU: 복구 시점 spike 후 정상화
 
 ---
@@ -229,9 +240,9 @@ multi-instance 협조 재시도 동작의 직접적 증거.
 
 outbox 저장 및 재발행이 DB에 미치는 영향을 측정하였다.
 
-> ![DB latency during outbox](../image/degrade/db-latency-during-outbox.png)  
-> - `sync latency`: outbox 저장/재발행 구간 소폭 상승 후 즉시 정상화  
-> - `I/O throughput`: WAL checkpoint 패턴, 이상 없음  
+> ![DB latency during outbox](../image/degrade/db-latency-during-outbox.png)
+> - `sync latency`: outbox 저장/재발행 구간 소폭 상승 후 즉시 정상화
+> - `I/O throughput`: WAL checkpoint 패턴, 이상 없음
 > - **결론**: outbox 운영이 DB에 미치는 부하는 미미하며 서비스 영향 없음
 
 ---
@@ -277,7 +288,7 @@ public void republishPendingEvents() { ... }
 ```java
 // RealtimeHealthCheckScheduler
 if (kafka) {
-    kafkaHealthState.markUp();  // circuit breaker 해제
+        kafkaHealthState.markUp();  // circuit breaker 해제
 }
 ```
 
