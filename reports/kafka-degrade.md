@@ -377,7 +377,7 @@ if (kafka) {
 
 **원인**: `RealtimeEventDeduplicator`에서 Redis 예외 미처리 → `DefaultErrorHandler` exhausted → listener 중단.
 
-**수정**: try-catch 추가, 예외 시 `isDuplicate=false` 반환 (중복 소비 허용, listener 중단 방지):
+**수정**: try-catch 추가, 예외 시 `isDuplicate=false` 반환 (listener 중단 방지):
 
 ```java
 public boolean isDuplicate(String eventId) {
@@ -391,6 +391,21 @@ public boolean isDuplicate(String eventId) {
     }
 }
 ```
+
+현재 Consumer는 이벤트 수신 확인(감사 로그) 목적으로만 동작하며 데이터 변경이 없다.  
+Redis 장애 시 `isDuplicate=false` 반환으로 dedup이 스킵되더라도  
+메트릭 카운트와 로그가 중복될 뿐 실질적 부작용은 없으므로, 현재는 중복 소비를 허용한다.
+
+향후 Consumer가 팬아웃·상태 동기화 역할로 확장되면 중복 이벤트가 클라이언트에 직접 전파되므로,<br>
+Redis에만 의존하는 dedup 대신 DB 기반 처리 여부 체크 등 강한 멱등성 보장으로 전환이 필요하다.<br>
+eventId 기반 dedup 구조는 해당 전환을 위해 유지한다.
+
+해당 기능 추가 구현은 아래 문서에서 진행된다.
+
+> 📄 [인스턴스 자동 복구 · 스케일 아웃](./auto-scaling.md)  
+> auto-scaling 시 신규 인스턴스의 Kafka offset 기반 catch-up 및  
+> Consumer 팬아웃 전환 설계를 다룬다.
+
 
 ### 8-4. InvalidProducerEpochException
 

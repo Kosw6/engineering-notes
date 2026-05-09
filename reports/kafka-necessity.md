@@ -1,0 +1,296 @@
+# Kafka의 필요성
+
+> 이 문서는 실시간 캔버스 협업 시스템에서 Kafka를 도입한 이유와
+> Redis Pub/Sub 또는 직접 DB write 대비 어떤 문제를 해결하는지를 구체적인 흐름으로 설명한다.
+
+---
+
+## 요약
+
+| 역할 | 담당 |
+|------|------|
+| 실시간 전파 | Redis Pub/Sub (항상) |
+| 이벤트 로그 저장 | Kafka (항상, 비동기) |
+| 영속 상태 | PostgreSQL (source of truth) |
+| 임시 상태 | Redis (락, version hint, session) |
+
+Kafka는 실시간 전파 경로에 있지 않다.
+**이벤트 로그 저장, 내구성 보장, 복구 가능성** 을 위해 존재한다.
+
+---
+
+## 1. Redis Pub/Sub 대비 Kafka가 필요한 이유
+
+### Redis Pub/Sub의 한계 — fire-and-forget
+
+Redis Pub/Sub은 구독자가 없으면 이벤트가 사라진다.
+
+```
+[정상 상태]
+서버 A 발행 → Redis Pub/Sub → 서버 A 수신 ✓
+                             → 서버 B 수신 ✓
+
+[서버 B 다운 상태]
+서버 A 발행 → Redis Pub/Sub → 서버 A 수신 ✓
+                             → 서버 B 없음 → 이벤트 영구 유실
+                                              복구 방법 없음
+```
+
+### Kafka — 수신자 상태와 무관하게 보존
+
+```
+[서버 B 다운 상태]
+서버 A 발행 → Kafka 토픽에 저장 (서버 B 상태 무관)
+
+[서버 B 복구]
+서버 B Kafka consumer 재합류
+→ 다운 구간 offset부터 자동 catch-up
+→ 이벤트 로그 공백 없이 완성
+```
+
+### 실제 시나리오
+
+```
+09:00  서버 B 다운
+09:00 ~ 09:05  User-A(서버 A)가 Node 1, 2 편집
+               LOCK_ACQUIRED × 2, EDIT_END × 2 → Kafka 저장
+
+09:05  서버 B 복구
+       Kafka consumer LAG: 4
+       → catch-up 시작
+
+09:05:03  [KAFKA-CONSUMER] event received. eventId=aaa, subType=LOCK_ACQUIRED
+09:05:03  [KAFKA-CONSUMER] event received. eventId=bbb, subType=LOCK_RELEASED
+09:05:03  [KAFKA-CONSUMER] event received. eventId=ccc, subType=LOCK_ACQUIRED
+09:05:03  [KAFKA-CONSUMER] event received. eventId=ddd, subType=LOCK_RELEASED
+          LAG → 0
+
+Redis Pub/Sub만 있었다면: 서버 B는 이 4개 이벤트를 영영 모름
+Kafka가 있으면: 서버 B의 이벤트 로그 완성
+```
+
+**중요한 구분:**
+- 캔버스 노드 상태(편집 결과) → DB에서 복원 (Kafka 무관)
+- Kafka catch-up → 이벤트 로그의 공백을 채움 (감사, 진단 목적)
+
+---
+
+## 2. 직접 DB write 대비 Kafka가 필요한 이유 (auto_save)
+
+### 배경
+
+유저가 노드를 편집하는 동안 5~10초마다 auto_save가 발생한다.
+이 데이터를 어디에 저장하느냐에 따라 내구성과 성능이 달라진다.
+
+---
+
+### 이유 1 — 앱 크래시 내구성
+
+```
+[직접 DB write]
+
+유저 편집 중 → 5초 경과 → auto_save 요청
+앱 서버 DB 트랜잭션 시작
+  └─ write 도중 앱 서버 크래시
+       → 트랜잭션 롤백
+       → 해당 auto_save 유실
+       → 유저 재접속 시 이전 저장 시점으로 되돌아감
+          (최대 5~10초 편집 유실)
+
+[Kafka 버퍼]
+
+유저 편집 중 → 5초 경과 → auto_save 요청
+앱 서버 Kafka 발행 완료
+  └─ 발행 직후 앱 서버 크래시
+       → Kafka에 이벤트 보존됨
+       → 앱 복구 후 consumer가 DB에 write
+       → 유저 재접속 시 크래시 직전 draft 복원
+```
+
+**핵심:** DB write 도중 죽으면 롤백. Kafka 발행 후 죽으면 이벤트는 남는다.
+
+---
+
+### 이유 2 — 쓰기 응답 지연 없음
+
+```
+[직접 DB write]
+
+유저 편집 중 → auto_save 요청
+  └─ 앱 서버 → DB write 완료 대기 (동기)
+       └─ DB 부하 시: 100~300ms 대기
+            └─ 유저가 계속 입력하는 동안 이전 요청이 블로킹
+                 → 편집 중 툭툭 끊기는 UX
+
+[Kafka 버퍼]
+
+유저 편집 중 → auto_save 요청
+  └─ 앱 서버 → Kafka 발행 (~5ms, 비동기)
+       └─ 즉시 응답 반환
+            → 유저는 지연 없이 편집 계속
+  (DB write는 Kafka consumer가 별도로 처리)
+```
+
+---
+
+### 이유 3 — 완전한 draft 이력
+
+```
+[직접 DB write — upsert 방식]
+
+09:00:05  auto_save → DB upsert → draft: "안녕"
+09:00:10  auto_save → DB upsert → draft: "안녕하세"      ← 이전 덮어씌워짐
+09:00:15  auto_save → DB upsert → draft: "안녕하세요"    ← 이전 덮어씌워짐
+
+DB에 남는 것: "안녕하세요" 1건만
+
+→ 10초 시점 내용 조회 불가
+→ 두 유저 동시 편집 충돌 시 중간 상태 추적 불가
+→ 잘못 편집 후 5초 이전으로 롤백 불가
+
+[Kafka 버퍼]
+
+09:00:05  auto_save → Kafka → { draft: "안녕",     ts: 09:00:05 }
+09:00:10  auto_save → Kafka → { draft: "안녕하세", ts: 09:00:10 }
+09:00:15  auto_save → Kafka → { draft: "안녕하세요", ts: 09:00:15 }
+
+Kafka에 남는 것: 3건 전부 (시계열 이력)
+DB에는 consumer가 최신 1건만 upsert
+
+→ "10초 시점 draft 줘" → Kafka에서 조회 가능
+→ 충돌 발생 시 편집 순서 추적 가능
+→ 특정 시점으로 롤백 → Kafka에서 해당 시점 draft 복원
+```
+
+---
+
+## 3. 동시 접속자 수에 따른 필요성
+
+### write/초 계산
+
+```
+동시 편집 유저 1,000명 × 1회/5초  =   200 write/초  → DB 직접 write 가능
+동시 편집 유저 5,000명 × 1회/5초  = 1,000 write/초  → 한계 구간
+동시 편집 유저 10,000명 × 1회/5초 = 2,000 write/초  → DB 부하 위험
+```
+
+### 진짜 병목 — write/초가 아닌 DB 연결 수
+
+```
+[직접 DB write]
+
+5,000명 동시 auto_save
+→ 최대 5,000개 DB 연결 또는 커넥션 풀 대기
+→ PgBouncer 사용해도 풀 소진 시 요청 지연/거절
+→ auto_save 실패 → UX 저하
+
+[Kafka 버퍼]
+
+5,000명 → Kafka 발행 (논블로킹)
+              ↓
+     Kafka Consumer N개 → DB upsert
+     (DB 연결은 consumer 수만큼만 유지)
+→ DB 연결 폭발 없음
+→ 부하를 consumer로 흡수 (backpressure)
+```
+
+### 결론
+
+| 동시 편집자 | 직접 DB write | Kafka 버퍼 |
+|-----------|------------|----------|
+| ~1,000명 | 충분 | 오버엔지니어링 |
+| ~5,000명 | 위험 구간 | 의미 있음 |
+| 10,000명+ | 한계 | 필수 |
+
+현재 포트폴리오 스케일에서는 직접 DB write로도 충분하다.
+단, 수천 명 이상 동시 편집 환경에서는 DB 연결 폭발 문제로 Kafka 버퍼가 필요해진다.
+
+---
+
+## 4. Outbox 패턴과 Kafka의 시너지
+
+### 문제 상황
+
+```
+Kafka가 일시적으로 다운된 경우:
+앱 서버 → Kafka 발행 실패
+→ auto_save 이벤트 유실?
+```
+
+### Outbox 패턴으로 해결
+
+```
+앱 서버 → Kafka 발행 시도
+  └─ 실패 → Outbox DB 테이블에 저장 (로컬 트랜잭션)
+                ↓
+     Outbox 재발행 스케줄러 (5초 주기)
+                ↓
+     Kafka 복구 후 자동 재발행
+                ↓
+     Kafka consumer → DB auto_save_draft upsert
+```
+
+**보장 범위:**
+- Kafka 일시 장애 → Outbox가 버퍼 역할 → 복구 후 재발행
+- at-least-once 보장 (중복은 eventId dedup으로 처리)
+
+**관련 문서:**
+
+> [Kafka 장애 대응 전략 — Outbox Pattern](../trader/trader/trader-backend/docs/perf/kafka-fault-tolerance.md)  
+> Outbox 실제 동작 검증, MTTR 실측, DB 상태 증적, 발견된 버그 수정 내역
+
+> [장애 시나리오별 UX 영향 분석](../trader/trader/trader-backend/docs/perf/kafka-ux-tradeoff.md)  
+> Kafka 없음 / hot-path 직접 사용 / degrade 없음 / 현재 구조 4가지 케이스별 UX 비교
+
+---
+
+## 5. 향후 확장 시나리오 — Kafka fan-out
+
+현재는 Kafka consumer가 1개(이벤트 로그 기록)지만,
+이후 아래 컨슈머를 추가할 때 앱 서버 코드 수정 없이 확장 가능하다.
+
+```
+앱 서버 → Kafka 발행 (변경 없음)
+              ↓
+  ┌───────────┼───────────────┐
+  ↓           ↓               ↓
+이벤트 로그  알림 서비스     분석 서비스
+consumer    consumer         consumer
+(현재)      (향후: "User-A가  (향후: 편집 패턴
+             Node 1 편집함"   분석, 활성 사용자
+             푸시 알림)       집계 등)
+```
+
+Redis Pub/Sub은 이 fan-out이 불가능하다.
+Kafka는 consumer group을 추가하는 것만으로 확장된다.
+
+---
+
+## 6. 트레이드오프 — Kafka를 쓰지 말아야 할 때
+
+| 상황 | 판단 |
+|------|------|
+| 동시 편집자 1,000명 이하 | 직접 DB write가 더 단순 |
+| 이벤트 이력 필요 없음 | DB upsert로 충분 |
+| 인프라 운영 인력 없음 | Kafka 운영 부담 > 이득 |
+| 단일 인스턴스 서버 | Redis Pub/Sub + DB로 충분 |
+
+Kafka는 인프라 복잡도를 높인다.
+현재 시스템에서 도입 판단 기준:
+
+> "멀티 인스턴스 + 이벤트 로그 필요 + 향후 fan-out 확장 계획"
+> 이 세 가지가 맞으면 Kafka가 맞다.
+> 하나라도 없으면 Redis + DB로 충분히 해결 가능하다.
+
+---
+
+## 정리
+
+| 문제 | Kafka 없을 때 | Kafka 있을 때 |
+|------|-------------|-------------|
+| 서버 다운 구간 이벤트 | Redis Pub/Sub 유실, 복구 불가 | Kafka 보존, catch-up 가능 |
+| 앱 크래시 중 auto_save | DB 롤백 → 유실 | Kafka 보존 → consumer가 복원 |
+| auto_save 응답 지연 | DB write 동기 대기 | Kafka 발행 후 즉시 응답 |
+| draft 이력 추적 | 마지막 1건만 남음 | 전체 시계열 이력 보존 |
+| 동시 접속자 급증 | DB 연결 폭발 | consumer가 DB 연결 제어 |
+| 서비스 fan-out 확장 | 앱 코드 수정 필요 | consumer group 추가만으로 확장 |
