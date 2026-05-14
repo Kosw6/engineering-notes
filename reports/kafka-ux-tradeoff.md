@@ -6,7 +6,7 @@
 >
 > | 관련 문서 | 내용 |
 > |----------|------|
-> | [Kafka의 필요성](../../../../../engineering-notes/kafka-necessity.md) | Redis 한계, DB write 대비 이점, 스케일 분석 등 Kafka 도입 근거 |
+> | [Kafka의 필요성](./engineering-notes/kafka-necessity.md) | Redis 한계, DB write 대비 이점, 스케일 분석 등 Kafka 도입 근거 |
 > | [Kafka 장애 대응 전략 — Outbox Pattern](./kafka-fault-tolerance.md) | 실제 장애 실험 측정 결과, MTTR, DB 증적 |
 
 ---
