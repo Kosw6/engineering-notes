@@ -1,4 +1,4 @@
-# Kafka 필요성 검증 — Reliable 이벤트 누락 보정
+# Redis Pub/Sub 기반 실시간 전파의 한계와 Reliable 이벤트 복구 설계
 
 > **검증 일자**: 2026-05-10
 > **대상**: Redis Pub/Sub 누락 시 Kafka consumer의 Reliable 이벤트 재전파 경로
@@ -29,8 +29,10 @@
 | 영속 상태 | PostgreSQL (source of truth) |
 | 임시 상태 / dedup 추적 | Redis (락, session, processed eventId) |
 
-Kafka는 실시간 전파의 1차 경로가 아니다.  
-1차 전파는 Redis Pub/Sub이 담당하고, Kafka는 누락 보정 경로로 동작한다.
+Kafka를 실시간 전파의 기본 경로로 사용한 것이 아니라,
+Redis Pub/Sub 기반의 낮은 latency 실시간 UX를 유지하면서,
+일시 장애 및 Pub/Sub miss 상황에서 Reliable 이벤트를 복구하기 위한
+durable replay 경로로 사용하였다.
 
 **핵심 구분:**
 - 현재 상태(state): Redis / DB — source of truth
@@ -225,6 +227,12 @@ Pub/Sub miss로 인해 발생한 상태 불일치 시간을 짧게 줄이는 역
 | Kafka consumer 수신 후 | 복구 불가 | `🔒 편집 중` 뱃지 + 빨간 테두리 자동 표시 |
 | User-B 잠금 시도 | 서버 lock conflict 에러 (UX 충격) | 시도 전 차단 (잠금 상태 인지) |
 
+>사용자 입장에서는 단순히 이벤트가 전달되었는가보다,
+다른 사용자의 편집 상태를 신뢰할 수 있는지가 중요하였다.
+
+>Kafka replay 경로를 통해 Pub/Sub miss 이후에도
+잠금 상태 및 편집 상태를 다시 수렴시킬 수 있었다.
+
 ## Publish → Consume 전파 지연 측정
 
 Kafka replay와 Redis Pub/Sub 경로의 publish → consumer/listener 수신 지연을 비교하였다.
@@ -269,12 +277,12 @@ Kafka replay와 Redis Pub/Sub 경로의 publish → consumer/listener 수신 지
 다만 시간이 지나며 Kafka replay 역시 수십~수백 ms 수준으로 안정화되었고,
 Pub/Sub miss 상황에서도 멀티 인스턴스 간 상태 불일치 시간을 짧게 유지할 수 있음을 확인하였다.
 
-중요한 점은 Kafka가 Redis보다 빠른가가 아니라:
+중요한 점은 Kafka가 Redis보다 빠른가가 아니라,
+각 경로의 역할이 다르다는 점이었다.
 
 - Redis는 정상 상태의 실시간 전파(hot path)
 - Kafka는 Reliable 이벤트 누락 보정(recovery path)
 
-이라는 역할 분리다.
 
 Kafka replay는 상태를 즉시 강제 동기화하는 것이 아니라,
 Pub/Sub miss로 인해 발생한 상태 수렴 시간을 줄이는 역할을 한다.
@@ -388,10 +396,10 @@ Redis 장애로 `markPropagated()` 실패 시 → warn 로그만 출력, 예외 
 
 | 상황 | 판단 |
 |------|------|
-| 단일 인스턴스 서버 | Redis Pub/Sub + DB로 충분 |
-| Reliable 이벤트 누락 허용 가능 | 불필요 |
-| 인프라 운영 인력 없음 | 운영 부담 > 이득 |
-| 동시 편집자 1,000명 이하 | 직접 DB write가 더 단순 |
+| 단순 CRUD / 단일 인스턴스 구조 | Redis Pub/Sub + DB만으로 충분 |
+| Reliable 이벤트 replay 요구 없음 | Kafka 불필요 |
+| 장애 이후 상태 복구 요구 낮음 | 운영 복잡도 대비 이점 제한 |
+| 운영 인프라 관리 여력이 부족한 경우 | 운영 부담이 더 클 수 있음 |
 
 > "멀티 인스턴스 + Reliable 이벤트 무결성 보장 필요 + 향후 fan-out 확장 계획"  
 > 이 세 가지가 맞으면 Kafka가 맞다.

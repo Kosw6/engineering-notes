@@ -206,4 +206,15 @@ Redis 장애 시 gRPC relay로 degrade한다. HTTP relay는 비교 검증 및 �
 단순 장애 동작 확인을 넘어, **장애 범위를 제한하고 복구를 자동화하는 설계 검증**을 목표로 했다.  
 각 인프라 컴포넌트의 장애가 hot path로 전파되지 않도록 경로를 분리하고,  
 복구 시 수동 개입 없이 자동으로 원래 경로로 복귀하는 것이 핵심이다.
-이를 통해 장애 상황에서도 사용자 편집 흐름과 시스템 정합성을 동시에 유지하는 것을 목표로 하였다.
+이를 통해 장애 상황에서도:
+
+- hot path(실시간 UX)는 Redis 기반 저지연 경로로 유지하고,
+- durable path(이벤트 내구성)는 Kafka replay/outbox로 보완하며,
+- 현재 상태(state)는 Redis/DB fallback 기준으로 유지하고,
+- Reliable 이벤트 흐름(stream)은 Kafka catch-up으로 보정하는
+
+다층 구조를 검증하였다.
+
+즉 Kafka는 현재 상태 저장소라기보다,
+멀티 인스턴스 환경에서 Reliable 이벤트 누락을 보정하고
+최종 상태 정합성을 보조하는 durable event log 계층으로 동작한다.
