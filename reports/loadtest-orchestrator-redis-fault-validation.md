@@ -3,7 +3,7 @@
 > **검증 대상**: cursor relay 3-path benchmark  
 > **검증 목적**: 오케스트레이터가 Terraform 인프라 생성, health check, WebSocket 부하, Redis 장애 주입, 복구 확인까지 한 번에 자동화할 수 있는지 확인  
 > **비교군**: Redis 장애 주입 시나리오(v2) vs Redis 장애 없는 baseline(v3)  
-> **시나리오 파일**: `scenario.yml`은 별도 첨부 예정
+> **시나리오 파일**: `scenario.yml`은 문서내 별도 첨부 예정
 
 ---
 
