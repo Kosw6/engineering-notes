@@ -40,11 +40,15 @@ Spring Boot, JPA, PostgreSQL/TimescaleDB, Redis, Kafka, WebSocket 환경에서�
   - Prometheus / Grafana / Loki 기반 관측
   - Alert → Lambda / SSM / ASG 기반 복구 흐름 검증
 
+- **Trader Data Platform**
+  - KIS, BLS, SEC 원본 보존 → Kafka Outbox → Python ETL → Lineage 추적
+  - Kafka lag와 Worker 상태를 기준으로 AWS ASG **0 → 1 → 0** 자동 조절 검증
+
 ---
 
 ## Engineering Tracks
 
-이 저장소의 문서는 크게 세 가지 관점으로 나눌 수 있습니다.
+이 저장소의 문서는 크게 네 가지 관점으로 나눌 수 있습니다.
 
 ---
 
@@ -119,6 +123,45 @@ WebSocket 기반 실시간 협업 구조에서 fanout, sharding, fallback, failb
 
 ---
 
+### 4. Data Pipeline & Control Plane Track
+
+KIS 주가, BLS 거시경제, SEC 재무 데이터를 수집하고, 원본 보존부터 정규화와 운영 제어까지 연결한 기록입니다.
+
+이 트랙에서는 다음 질문을 다룹니다.
+
+- 외부 API 수집이 실패하거나 Worker가 중단되면 어디부터 다시 처리하는가?
+- raw 원본과 정규화된 도메인 레코드를 어떻게 연결하고 추적하는가?
+- DB commit과 Kafka offset commit 사이의 불일치를 어떻게 방어하는가?
+- 중복 전달된 이벤트를 어떻게 식별하고 안전하게 재처리하는가?
+- 처리할 작업이 있을 때만 Worker를 실행하고, 유휴 상태에서는 어떻게 회수하는가?
+
+핵심 구조는 다음과 같습니다.
+
+```text
+Admin
+→ Go Controller
+→ DB Outbox
+→ Kafka
+→ Python Collector / ETL Worker
+→ Raw Storage
+→ Normalized Tables
+→ Lineage / Processed Event
+```
+
+Go Controller는 job, outbox, Kafka lag, Worker heartbeat와 scale command를 관리합니다. Python Worker는 수집과 ETL을 담당하며, raw 원본과 정규화 결과는 `source_object`, `record_lineage`, `processed_event`로 연결합니다.
+
+AWS에서는 `trader.jobs.events` lag가 1이 되자 Python Worker ASG가 **0 → 1**로 확장되고, 작업 완료 후 전체 lag 0과 idle 120초를 확인해 **1 → 0**으로 축소되는 흐름을 검증했습니다.
+
+#### Main Notes
+
+- [Trader Data Platform 문서 인덱스](./reports/Data/00_TRADER_DATA_PLATFORM_INDEX.md)
+- [데이터 파이프라인 아키텍처](./reports/Data/01_DATA_PIPELINE_ARCHITECTURE.md)
+- [장애 복구 및 재처리 시나리오](./reports/Data/02_FAILURE_RECOVERY_SCENARIOS.md)
+- [AWS 배포와 비용 최적화](./reports/Data/03_AWS_DEPLOYMENT_COST_OPTIMIZATION.md)
+- [AWS Worker ASG 자동 확장 검증](./reports/Data/04_AWS_WORKER_ASG_AUTO_SCALING_VALIDATION.md)
+
+---
+
 ## Recommended Reading Path
 
 지원 직무나 관심사에 따라 아래 순서로 읽을 수 있습니다.
@@ -147,6 +190,14 @@ WebSocket 기반 실시간 협업 구조에서 fanout, sharding, fallback, failb
 4. [PoC 3 - Kafka Replay 기반 Failback Recovery](./reports/GroupController/poc3-failback-kafka-replay-recovery.md.md)
 5. [Redis Pub/Sub 장애 대응](./reports/pubsub-degrade.md)
 6. [Kafka 장애 대응](./reports/kafka-degrade.md)
+
+### Data Platform / Pipeline
+
+1. [Trader Data Platform 문서 인덱스](./reports/Data/00_TRADER_DATA_PLATFORM_INDEX.md)
+2. [데이터 파이프라인 아키텍처](./reports/Data/01_DATA_PIPELINE_ARCHITECTURE.md)
+3. [장애 복구 및 재처리 시나리오](./reports/Data/02_FAILURE_RECOVERY_SCENARIOS.md)
+4. [AWS 배포와 비용 최적화](./reports/Data/03_AWS_DEPLOYMENT_COST_OPTIMIZATION.md)
+5. [AWS Worker ASG 자동 확장 검증](./reports/Data/04_AWS_WORKER_ASG_AUTO_SCALING_VALIDATION.md)
 
 ---
 
@@ -201,9 +252,11 @@ WebSocket 기반 실시간 협업 구조에서 fanout, sharding, fallback, failb
 - Database: PostgreSQL, TimescaleDB
 - Messaging: Redis, Kafka
 - Realtime: WebSocket
+- Data Pipeline: Go Controller, Python Collector/ETL, DB Outbox, Lineage
 - Infra: Docker, AWS, GitHub Actions
 - Observability: k6, Prometheus, Grafana, Loki, JFR, JMC
 - Recovery Automation: Grafana Alert, Lambda, SSM, Auto Scaling Group
+- Worker Orchestration: Kafka lag, heartbeat, AWS ASG
 
 ---
 
