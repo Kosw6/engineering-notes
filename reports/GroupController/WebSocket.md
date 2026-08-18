@@ -971,3 +971,36 @@ Consumer 장애가 발생할 경우 Kafka는 브로커에 저장된 메시지를
 
 따라서 멀티 인스턴스 환경으로 확장되는 WebSocket 협업 시스템에서는 이벤트 특성에 따라 메시지 브로커를 분리하는 구조가 효과적인 확장 전략이 될 수 있다.
 
+---
+
+## 현재 멀티 인스턴스 reliable 이벤트 경로
+
+후속 구현에서는 Redis Pub/Sub과 Kafka를 이벤트 유형별로 완전히 분리하기보다,
+하나의 reliable 이벤트에 대해 서로 다른 목적의 두 경로를 함께 사용한다.
+
+```text
+Reliable 이벤트 생성
+  ├─ Redis Pub/Sub → 모든 WS 서버에 정상 실시간 fan-out
+  └─ Kafka → 영속 로그 저장 및 Pub/Sub 누락 보정
+```
+
+Kafka consumer는 WebSocket 서버마다 고유한 consumer group을 사용한다.
+
+```text
+ws-A → reliable-replay-ws-A
+ws-B → reliable-replay-ws-B
+```
+
+공유 consumer group을 사용하면 Kafka partition이 서버 사이에 분배되어,
+룸 세션을 가진 서버와 메시지를 소비한 서버가 달라질 수 있다.
+서버별 consumer group을 사용하면 각 서버가 reliable 이벤트를 독립적으로 확인할 수 있다.
+
+각 서버는 Redis Pub/Sub 수신 후
+`processed:reliable:{instanceId}:{eventId}`를 TTL과 함께 기록한다.
+이후 같은 이벤트를 Kafka에서 소비했을 때 키가 있으면 건너뛰고,
+키가 없으면 해당 서버가 Pub/Sub 이벤트를 놓친 것으로 판단해
+그 서버의 local WebSocket session에만 재전파한다.
+
+일반 Kafka 보정 consumer는 Redis로 메시지를 다시 발행하지 않는다.
+복구용 catch-up consumer가 replay 이벤트를 Redis로 재발행하는 경로와 구분해야 한다.
+

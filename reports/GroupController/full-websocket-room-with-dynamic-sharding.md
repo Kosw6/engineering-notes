@@ -93,7 +93,8 @@ fanout locality 측면에서는 효율적이다.
 * WebSocket 연결 처리
 * local fanout 수행
 * owner 서버 역할 수행
-* Kafka consumer 결과 반영 후 broadcast 수행
+* Redis Pub/Sub 수신 후 local fanout 수행
+* 서버별 Kafka consumer로 reliable 이벤트 누락 보정
 
 ---
 
@@ -107,8 +108,8 @@ fanout locality 측면에서는 효율적이다.
 
 ### Kafka
 
-* ordering / durability / replay 담당
-* 동일 key 기준 이벤트 순서 보장
+* reliable 이벤트 durability / replay 담당
+* 동일 key와 partition 내부의 이벤트 순서 보장
 
 ---
 
@@ -195,19 +196,20 @@ Redis는 이 구조에서
 
 ### 6.4 Kafka
 
-Kafka는 락 판정 자체를 수행하지 않는다.
+Kafka는 락 판정이나 정상 실시간 fan-out을 수행하지 않는다.
 락 판정은 Redis와 owner 서버에서 즉시 처리하고,
-그 결과로 확정된 이벤트를 Kafka에 기록한다.
+그 결과로 확정된 reliable 이벤트를 Kafka에 기록한다.
 
 Kafka의 역할은 다음과 같다.
 
-* 동일 key 기준 순서 보장
+* 동일 key가 배치된 partition 내부 순서 보장
 * 이벤트 durability 확보
 * replay 기반 복구 가능성 제공
+* Redis Pub/Sub 누락 시 서버별 보정 경로 제공
 
 즉,
 
-> **Kafka는 상태 변경 이벤트의 정합성 계층**
+> **Kafka는 reliable 이벤트의 영속 로그 및 누락 보정 계층**
 
 으로 사용된다.
 
@@ -254,10 +256,10 @@ Redis Pub/Sub는 다음 특성을 가진다.
 Connected WS
 → Owner WS
 → Redis State Store
-→ Kafka
-→ Kafka Consumer
-→ Redis Pub/Sub
-→ WS local fanout
+→ reliable 이벤트 생성
+  ├─ Redis Pub/Sub → 각 WS 서버의 local fanout
+  └─ Kafka 저장 → 서버별 consumer가 Pub/Sub 누락 여부 확인
+                 → 누락된 서버의 local session에만 보정 전파
 ```
 
 ---
@@ -294,10 +296,10 @@ Connected WS
 1. Client → Connected WS
 2. → Owner WS
 3. → Redis lock 획득
-4. → Kafka publish
-5. → Kafka Consumer 처리
-6. → Redis Pub/Sub broadcast
-7. → WS local fanout
+4. → reliable 이벤트 생성
+5. → Redis Pub/Sub broadcast와 Kafka 로그 저장을 독립 수행
+6. → 각 WS 서버가 local fanout
+7. → 서버별 Kafka consumer가 `eventId` 기준 누락만 보정
 
 ---
 
@@ -316,11 +318,11 @@ WS → Redis Pub/Sub → fanout
 
 ### 7.4 노드 이동 종료
 
-1. Owner WS → Kafka commit 이벤트
-2. Consumer → 순차 처리
-3. 필요 시 DB 반영
-4. Redis lock 해제
-5. Redis Pub/Sub broadcast
+1. Owner WS → 상태 변경 확정 및 필요 시 DB 반영
+2. Redis lock 해제
+3. Redis Pub/Sub으로 commit 이벤트 실시간 fan-out
+4. Kafka에 동일 reliable 이벤트 저장
+5. 서버별 consumer가 Pub/Sub 누락 여부를 확인하고 필요한 서버만 보정
 
 ---
 
@@ -332,8 +334,8 @@ WS → Redis Pub/Sub → fanout
 * multi-node fanout 해결
 
 Kafka로 broadcast를 직접 처리할 경우
-consumer group 증가 및 비용 상승 문제가 발생할 수 있으므로
-전파 계층을 분리하였다.
+공유 consumer group의 partition 할당과 WebSocket 세션 배치가 일치하지 않을 수 있으므로
+정상 fan-out은 Redis Pub/Sub으로 분리하였다.
 
 ---
 
@@ -345,7 +347,7 @@ consumer group 증가 및 비용 상승 문제가 발생할 수 있으므로
 
 Redis Pub/Sub만 사용할 경우
 메시지 유실 및 순서 보장 문제가 발생할 수 있어
-정합성 계층으로 Kafka를 도입하였다.
+reliable 이벤트의 영속 로그와 누락 보정 계층으로 Kafka를 도입하였다.
 
 ---
 
@@ -398,6 +400,10 @@ Dynamic Sharding 구조를 제안하였다.
 * write path는 owner 서버로 단일화
 * Kafka를 통해 ordering / durability 확보
 * Redis Pub/Sub으로 low-latency fanout 수행
+
+현재 구현에서는 각 WS 서버가 `reliable-replay-${instanceId}`라는 고유 consumer group을 사용한다.
+Redis Pub/Sub으로 이미 처리한 `eventId`이면 Kafka 이벤트를 건너뛰고,
+해당 서버가 놓친 경우에만 그 서버의 local session에 재전파한다.
 
 즉, 본 구조는 단순 연결 분산을 넘어
 

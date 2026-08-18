@@ -54,6 +54,15 @@ WebSocket은 장기 연결이므로 복구된 인스턴스로 강제 이동하�
 불필요한 reconnect / room rejoin 비용과 사용자 체감 불안정이 발생한다.  
 신규 연결부터 자연스럽게 원래 hash 결과로 수렴하는 방식을 채택한다.
 
+### PoC 3 정책과의 차이
+
+PoC 3에서는 복구 lifecycle을 검증하기 위해 fallback 서버를 Drain하고
+기존 세션에 reconnect를 요청하는 강제 failback 흐름을 실험했다.
+이 PoC 4에서는 그 후속 판단으로, 강제 reconnect가 만드는 room rejoin 비용과
+사용자 체감 불안정을 줄이기 위해 **기존 세션 유지 + 신규 연결부터 자연 failback**을
+최종 라우팅 정책으로 선택했다. 따라서 두 문서는 서로 다른 검증 단계이며,
+현재 정책을 설명할 때는 이 문서의 자연 failback을 기준으로 한다.
+
 ---
 
 ## 검증 환경

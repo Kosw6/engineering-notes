@@ -37,7 +37,7 @@ Catch-up → 복구 replay
 
 ### 📈 결과
 
-* Kafka replay를 통해 **이벤트 유실 없이 상태 복구**
+* 검증 시나리오에서 Kafka replay가 **목표 offset까지 도달함을 확인**
 * 장애 중에도 서비스 연속성 유지
 * 복구 후 서버를 안전하게 운영 그룹으로 재편입
 * 클라이언트 재연결을 통해 자연스러운 서버 전환
@@ -97,10 +97,11 @@ Kafka 기반 replay와 Gateway 중심 orchestration을 통해
    - 5.6 [Failback (Drain)](#56-failback-drain)
    - 5.7 [클라이언트 전환](#57-클라이언트-전환)
 6. [검증 결과](#6-검증-결과)
-   - 6.1 [이벤트 유실 없음](#61-이벤트-유실-없음)
+   - 6.1 [목표 offset 도달](#61-목표-offset-도달)
    - 6.2 [서비스 연속성 유지](#62-서비스-연속성-유지)
    - 6.3 [Failback 성공](#63-failback-성공)
 7. [결론](#7-결론)
+8. [검증 범위와 후속 개선](#8-검증-범위와-후속-개선)
 
 ## 1. 서론
 
@@ -200,6 +201,11 @@ private final Set<String> recoveryTriggeredServers = ConcurrentHashMap.newKeySet
 | Broadcast | 실시간 이벤트 처리   |
 | Catch-up  | 장애 복구 replay |
 
+이 PoC에서 ws-1과 ws-2의 Broadcast Consumer는 동일한
+`canvas-broadcast-group`에 참여해 partition을 분담했다. 따라서 이 단계는
+장애 시 rebalance와 partition takeover를 검증한 것이며, 모든 WS 서버가
+모든 이벤트를 받는 fan-out 구조를 의미하지 않는다.
+
 ---
 
 ### 4.4 Catch-up 설계
@@ -279,6 +285,8 @@ public class RecoveryOrchestrator {
 ```
 * resolveEndOffsetsWithRetry()는 따라잡을 목표 offset을 저장하는 역할이고, catchupContainer.start() 이후 Kafka consumer poll loop가 시작되면서 과거 이벤트를 자동 consume하며
 * Kafka consumer는 container.start() 이후 poll loop를 통해 자동으로 backlog를 소비한다.
+* 여기서 end offset은 종료 목표다. replay 시작 위치는 해당 catch-up consumer group의
+  committed offset이 있으면 그 다음 위치이고, 없으면 `auto.offset.reset` 정책에 따라 결정된다.
 
 ---
 
@@ -636,8 +644,8 @@ public class RawCanvasEventBroadcaster {
 
 ---
 
-### 6.1 이벤트 유실 없음
-* 운영 컨테이너 내 이벤트 3개를 캐치업시 정상 replay
+### 6.1 목표 offset 도달
+* 신규 catch-up consumer group이 offset 0부터 2까지 보존 이벤트 3건을 replay
 * replayCount=3
 * offset 기준 복구 완료
 ```text
@@ -646,7 +654,7 @@ public class RawCanvasEventBroadcaster {
 [ws-service] [BeanNameSet-C-1] c.e.t.recovery.CatchupConsumerService    : [CATCHUP] raw-consume instanceId=ws-1 partition=0 offset=2 key=1 groupId=1 entityId=19 version=6
 [ws-service] [BeanNameSet-C-1] c.e.t.recovery.CatchupConsumerService    : [CATCHUP] completed instanceId=ws-1 replayCount=3, targetOffsets={0=2}, lastConsumedOffsets={0=2}, catchupCompleted=true
 ```
-👉 Kafka replay 기반 데이터 정합성 확보
+👉 검증 시나리오에서 Kafka replay의 목표 offset 도달 확인
 
 ---
 
@@ -694,10 +702,41 @@ public class RawCanvasEventBroadcaster {
 * WebSocket 서버 간 **서비스 연속성을 고려한 failover 및 failback**
 * Gateway 중심 **lifecycle orchestration**
 
+검증 범위는 2개의 WebSocket 인스턴스와 제한된 Kafka partition 조건이며,
+대규모 partition/consumer 구성과 임의의 룸-서버 배치까지 일반화한 결과는 아니다.
+
+---
+
+## 8. 검증 범위와 후속 개선
+
+공유 `canvas-broadcast-group`은 장애 시 다른 서버가 partition과 committed offset을
+이어받는 데에는 적합하지만, 서버 수가 늘고 WebSocket 세션이 여러 서버에 분산되면
+특정 룸의 이벤트가 그 룸의 세션을 가진 서버에 도달한다고 보장할 수 없다.
+Kafka의 partition 할당과 WebSocket 세션 배치는 서로 독립적이기 때문이다.
+
+예를 들어 룸 세션은 ws-1에 있지만 이벤트 partition이 ws-2에 할당되면,
+ws-2가 메시지를 소비하고 ws-1은 해당 메시지를 소비하지 못할 수 있다.
+Kafka consumer group은 consumer 사이에 작업을 분배하며, 모든 서버에 같은 메시지를
+전달하는 broadcast 수단이 아니다.
+
+현재 구현에서는 이 한계를 다음과 같이 보완했다.
+
+* Redis Pub/Sub: 모든 WebSocket 서버에 정상 실시간 이벤트 fan-out
+* Kafka: reliable 이벤트의 영속 로그 및 Redis Pub/Sub 누락 보정
+* 서버별 Consumer Group: `reliable-replay-${instanceId}`로 각 서버가 이벤트를 독립 소비
+* 서버별 멱등 키: `processed:reliable:{instanceId}:{eventId}`로 중복 WS 전파 방지
+
+일반 Kafka 보정 consumer는 Redis Pub/Sub으로 이미 처리한 이벤트면 건너뛰고,
+해당 서버가 놓친 이벤트만 그 서버의 로컬 WebSocket 세션에 재전파한다.
+
+또한 본 PoC는 복구 서버로 기존 세션을 강제로 이동시키는 Drain 방식을 검증했으나,
+후속 Rendezvous Hashing 라우팅에서는 기존 fallback 세션을 유지하고 신규 연결부터
+원래 hash 대상 서버로 복귀시키는 자연 failback 정책을 최종 선택했다.
+
 ---
 
 ## 🔥 최종 한 줄
 
-> Kafka 기반 replay를 통해 장애 상황에서 누락 이벤트를 복구하고, 서비스 연속성을 고려한 failover/failback 구조를 설계·검증하였다.
+> 제한된 2인스턴스 PoC에서 Kafka replay의 목표 offset 도달과 failover/failback lifecycle을 검증하고, 후속 구조에서는 Redis fan-out과 서버별 Kafka 보정 consumer로 확장 한계를 보완하였다.
 
 ---

@@ -21,7 +21,7 @@
 ---
 
 ### 🛠 해결 전략
-- Kafka 기반 이벤트 동기화로 모든 변경 사항을 인스턴스 간 전파
+- Kafka 이벤트 로그를 이용해 서버 변경 이력을 Draft 메타데이터에 반영
 - Redis 기반 Draft 상태 관리 (TTL + low-latency)
 - Draft 메타 정보 기반 충돌 감지
 
@@ -94,6 +94,7 @@ Kafka + Redis를 결합한 구조를 통해
 6. [검증 결과](#6-검증-결과)
 7. [실제 검증 로그 (E2E)](#7-실제-검증-로그-e2e)
 8. [결론](#8-결론)
+9. [현재 구현으로의 후속 개선](#9-현재-구현으로의-후속-개선)
 
 ---
 
@@ -168,7 +169,7 @@ RouteDecision decision = wsShardRouter.route(groupId, instances);
 [KAFKA][RECEIVED] groupId=..., entityId=15 version=1 changedFields=[x,y]
 ```
 
-모든 변경 사항은 Kafka 이벤트로 발행되며, 각 인스턴스에서 이를 소비한다.
+모든 변경 사항은 Kafka 이벤트로 발행되며, PoC consumer가 이를 소비해 Draft 메타데이터를 갱신한다.
 
 fallback 환경에서는 인스턴스 간 메모리 상태 공유가 불가능하기 때문에 Kafka를 통해 이벤트 기반 상태 동기화를 수행한다.
 
@@ -431,5 +432,34 @@ Kafka 기반 이벤트 동기화와 Redis 기반 Draft 상태 관리를 결합�
 * 데이터 정합성 유지
 * fallback 환경에서 상태 일관성 확보
 * 필드 단위 충돌 감지 및 자동 병합 지원
+
+---
+
+## 9. 현재 구현으로의 후속 개선
+
+이 PoC에서는 Kafka consumer가 Redis Draft의
+`serverChangedFieldsAfterEdit`를 갱신하고, 이를 사용자의 `dirtyFields`와 비교했다.
+그러나 Redis Draft와 Kafka 소비 상태에만 충돌 판정을 의존하면 Redis TTL 만료,
+consumer 지연 또는 재시작 시 변경 이력 체인이 불완전해질 수 있다.
+
+현재 구현에서는 충돌 판정의 기준을 다음과 같이 보완했다.
+
+1. 클라이언트가 수정 시작 시점의 `baseVersion`과 수정 필드를 요청에 포함한다.
+2. 서버의 `currentVersion`이 더 크면 `baseVersion + 1`부터 현재 버전까지의 변경 필드를 조회한다.
+3. Redis의 `canvas:version-hint:{teamId}:{graphId}:{nodeId}:{version}`를 MGET으로 조회한다.
+4. version hint 체인이 하나라도 누락되면 DB의 `NodeHistory`에서 변경 이력을 조회한다.
+5. 사용자 수정 필드와 서버 변경 필드의 교집합이 없으면 `AUTO_MERGE`, 있으면 `CONFLICT`로 판정한다.
+
+즉, 현재 Redis version hint는 빠른 판단을 위한 캐시이고,
+DB `NodeHistory`가 TTL 만료와 Redis 장애를 보완하는 영속 이력이다.
+
+실시간 전파 경로 역시 현재는 역할을 분리했다.
+
+* Redis Pub/Sub: 모든 WebSocket 서버에 정상 실시간 fan-out
+* Kafka: reliable 이벤트 영속화와 Redis Pub/Sub 누락 보정
+* 서버별 Kafka Consumer Group: `reliable-replay-${instanceId}`로 각 서버가 독립 소비
+
+따라서 이 문서의 Kafka → Redis Draft 갱신 방식은 충돌 판정 아이디어를 검증한 초기 PoC이고,
+현재 구현은 `baseVersion + Redis version hint + DB NodeHistory fallback`을 기준으로 동작한다.
 
 ---
